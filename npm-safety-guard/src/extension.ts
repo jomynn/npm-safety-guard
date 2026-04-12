@@ -280,12 +280,13 @@ function updateStatusBar(hitCount: number, _uri?: vscode.Uri) {
   if (hitCount === 0) {
     statusBarItem.text = "$(shield) NPM Safe";
     statusBarItem.backgroundColor = undefined;
-    statusBarItem.tooltip = "NPM Safety Guard: No known malicious packages detected";
   } else {
     statusBarItem.text = `$(warning) ${hitCount} THREAT${hitCount > 1 ? "S" : ""} FOUND`;
     statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
-    statusBarItem.tooltip = `NPM Safety Guard: ${hitCount} malicious package(s) detected! Click for report.`;
   }
+  statusBarItem.tooltip =
+    `NPM Safety Guard by sendwavehub.tech\n` +
+    `${hitCount === 0 ? "No threats detected" : `${hitCount} threat(s) found!`}`;
   statusBarItem.show();
 }
 
@@ -488,6 +489,27 @@ function buildReportHtml(
 
   ${totalHits > 0 ? '<h2 class="section">Findings</h2>' : ""}
   ${resultsHtml}
+
+  <div style="
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid #30363d;
+    font-family: sans-serif;
+    font-size: 12px;
+    color: #8b949e;
+    text-align: center;
+  ">
+    Built by
+    <a href="https://sendwavehub.tech"
+       style="color: #388bfd; text-decoration: none;">
+      SendWaveHub
+    </a>
+    &nbsp;·&nbsp;
+    <a href="https://sendwavehub.tech/products"
+       style="color: #388bfd; text-decoration: none;">
+      More tools
+    </a>
+  </div>
 </body>
 </html>`;
 }
@@ -509,10 +531,6 @@ function findLineForPackage(doc: vscode.TextDocument, name: string, _version: st
     if (re.test(lines[i])) return i;
   }
   return 0;
-}
-
-function docName(doc: vscode.TextDocument): string {
-  return doc.uri.fsPath.split("/").pop() || "package.json";
 }
 
 function getConfig(key: string): boolean {

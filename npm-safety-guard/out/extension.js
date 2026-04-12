@@ -153,12 +153,12 @@ function scanDocument(doc, editor) {
     // Show notification for critical findings
     if (hits.length > 0) {
         const criticals = hits.filter(h => h.entry.severity === "critical");
-        const msg = criticals.length > 0
-            ? `🚨 ${criticals.length} CRITICAL malicious package(s) found in ${docName(doc)}!`
-            : `⚠️ ${hits.length} suspicious package(s) found in ${docName(doc)}`;
-        vscode.window.showErrorMessage(msg, "View Report", "Dismiss").then(choice => {
+        vscode.window.showErrorMessage(`🚨 NPM Safety Guard: ${criticals.length} CRITICAL threat(s) found!`, "View Report", "sendwavehub.tech").then((choice) => {
             if (choice === "View Report") {
                 vscode.commands.executeCommand("npmSafetyGuard.showReport");
+            }
+            if (choice === "sendwavehub.tech") {
+                vscode.env.openExternal(vscode.Uri.parse("https://sendwavehub.tech"));
             }
         });
     }
@@ -215,13 +215,14 @@ function updateStatusBar(hitCount, _uri) {
     if (hitCount === 0) {
         statusBarItem.text = "$(shield) NPM Safe";
         statusBarItem.backgroundColor = undefined;
-        statusBarItem.tooltip = "NPM Safety Guard: No known malicious packages detected";
     }
     else {
         statusBarItem.text = `$(warning) ${hitCount} THREAT${hitCount > 1 ? "S" : ""} FOUND`;
         statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
-        statusBarItem.tooltip = `NPM Safety Guard: ${hitCount} malicious package(s) detected! Click for report.`;
     }
+    statusBarItem.tooltip =
+        `NPM Safety Guard by sendwavehub.tech\n` +
+            `${hitCount === 0 ? "No threats detected" : `${hitCount} threat(s) found!`}`;
     statusBarItem.show();
 }
 // ─── Webview Report ───────────────────────────────────────────────────────────
@@ -407,6 +408,27 @@ function buildReportHtml(results, scanned) {
 
   ${totalHits > 0 ? '<h2 class="section">Findings</h2>' : ""}
   ${resultsHtml}
+
+  <div style="
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid #30363d;
+    font-family: sans-serif;
+    font-size: 12px;
+    color: #8b949e;
+    text-align: center;
+  ">
+    Built by
+    <a href="https://sendwavehub.tech"
+       style="color: #388bfd; text-decoration: none;">
+      SendWaveHub
+    </a>
+    &nbsp;·&nbsp;
+    <a href="https://sendwavehub.tech/products"
+       style="color: #388bfd; text-decoration: none;">
+      More tools
+    </a>
+  </div>
 </body>
 </html>`;
 }
@@ -426,9 +448,6 @@ function findLineForPackage(doc, name, _version) {
             return i;
     }
     return 0;
-}
-function docName(doc) {
-    return doc.uri.fsPath.split("/").pop() || "package.json";
 }
 function getConfig(key) {
     return vscode.workspace.getConfiguration("npmSafetyGuard").get(key, true);
