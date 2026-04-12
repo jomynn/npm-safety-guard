@@ -196,13 +196,18 @@ function scanDocument(doc: vscode.TextDocument, editor?: vscode.TextEditor) {
   // Show notification for critical findings
   if (hits.length > 0) {
     const criticals = hits.filter(h => h.entry.severity === "critical");
-    const msg = criticals.length > 0
-      ? `🚨 ${criticals.length} CRITICAL malicious package(s) found in ${docName(doc)}!`
-      : `⚠️ ${hits.length} suspicious package(s) found in ${docName(doc)}`;
-
-    vscode.window.showErrorMessage(msg, "View Report", "Dismiss").then(choice => {
+    vscode.window.showErrorMessage(
+      `🚨 NPM Safety Guard: ${criticals.length} CRITICAL threat(s) found!`,
+      "View Report",
+      "sendwavehub.tech"
+    ).then((choice: string | undefined) => {
       if (choice === "View Report") {
         vscode.commands.executeCommand("npmSafetyGuard.showReport");
+      }
+      if (choice === "sendwavehub.tech") {
+        vscode.env.openExternal(
+          vscode.Uri.parse("https://sendwavehub.tech")
+        );
       }
     });
   }
