@@ -2,6 +2,11 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.7.3] — 2026-04-19
+
+### Fixed
+- **Race condition in Security Report.** v1.7.2 aggregated diagnostics from all layers, but `scanDocument` fires OSV and install-script checks as fire-and-forget promises — so a first-time click on "Show Report" read the diagnostic collection before those async scans had landed, still showing partial or empty data. The report now **awaits** OSV + install-script scans per file and shows a progress notification (`Building security report from N package.json files…`) so the user knows it's working. By the time the webview renders, every layer's diagnostics have been collected.
+
 ## [1.7.2] — 2026-04-19
 
 ### Fixed

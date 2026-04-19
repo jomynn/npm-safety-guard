@@ -487,15 +487,36 @@ function categoriseSource(source) {
     return null;
 }
 async function showWebviewReport(context) {
-    // Refresh: re-scan every package.json so diagnostics are current
     const pkgFiles = await vscode.workspace.findFiles("**/package.json", "**/node_modules/**", 50);
-    for (const uri of pkgFiles) {
-        try {
-            const doc = await vscode.workspace.openTextDocument(uri);
-            scanDocument(doc);
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `NPM Safety Guard: Building security report from ${pkgFiles.length} package.json file(s)…`,
+        cancellable: false,
+    }, async (progress) => {
+        const cfg = vscode.workspace.getConfiguration("npmSafetyGuard");
+        const osvEnabled = cfg.get("enableOSV", true);
+        const scriptsEnabled = cfg.get("enableScriptCheck", true);
+        for (let i = 0; i < pkgFiles.length; i++) {
+            const uri = pkgFiles[i];
+            progress.report({
+                message: `${i + 1}/${pkgFiles.length} ${vscode.workspace.asRelativePath(uri)}`,
+                increment: (1 / pkgFiles.length) * 100,
+            });
+            try {
+                const doc = await vscode.workspace.openTextDocument(uri);
+                // Sync layers
+                scanDocument(doc);
+                // Async layers — AWAIT so diagnostics land before we aggregate
+                const awaiters = [];
+                if (osvEnabled)
+                    awaiters.push(scanWithOSV(doc, undefined, { silent: true }));
+                if (scriptsEnabled)
+                    awaiters.push(scanInstallScripts(doc, undefined, { silent: true }));
+                await Promise.all(awaiters);
+            }
+            catch { /* skip malformed file */ }
         }
-        catch { /* skip */ }
-    }
+    });
     // Aggregate EVERY diagnostic from EVERY detection layer
     const findings = [];
     diagnosticCollection.forEach((uri, diags) => {
