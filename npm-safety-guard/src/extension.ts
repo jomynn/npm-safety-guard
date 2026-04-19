@@ -1129,7 +1129,8 @@ function buildDeepScanHtml(
   results: DeepScanResult[],
   totalDeps: number
 ): string {
-  const flagged = results.length;
+  const flagged = results.filter((r) => r.findings.length > 0 || r.scriptsPresent).length;
+  const errored = results.filter((r) => r.error).length;
   const totalFindings = results.reduce((a, r) => a + r.findings.length, 0);
   const criticals = results.flatMap((r) => r.findings).filter((f) => f.severity === "critical").length;
   const now = new Date().toLocaleString();
@@ -1295,6 +1296,10 @@ function buildDeepScanHtml(
     <div class="stat ${criticals === 0 ? 'ok' : 'danger'}">
       <div class="num">${criticals}</div>
       <div class="lbl">Critical</div>
+    </div>
+    <div class="stat ${errored === 0 ? 'ok' : 'warn'}">
+      <div class="num">${errored}</div>
+      <div class="lbl">Unreachable</div>
     </div>
     <div class="stat ok">
       <div class="num">${totalDeps}</div>

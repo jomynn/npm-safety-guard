@@ -205,11 +205,27 @@ function detect(file, content) {
             description: "child_process API used (informational — common in build tools).",
         },
     ];
+    // Benign-pattern filters: known harmless idioms that match a detector's
+    // regex but shouldn't count as real signal. Applied per-match on the snippet.
+    const BENIGN_PATTERNS = {
+        // `new Function('return this')` / `new Function('return globalThis')` —
+        // standard cross-env global-object polyfill, appears in lodash, jQuery,
+        // axios, core-js, etc. False-positive-heavy if flagged.
+        new_function: /new\s+Function\s*\(\s*['"`]return\s+(this|globalThis)['"`]?\s*\)\s*\(\s*\)/,
+    };
     for (const det of detectors) {
         let m;
         let count = 0;
         const re = new RegExp(det.pattern.source, det.pattern.flags);
         while ((m = re.exec(content)) !== null && count < 5) {
+            const snip = snippet(content, m.index);
+            // Benign-pattern skip
+            const benign = BENIGN_PATTERNS[det.type];
+            if (benign && benign.test(snip)) {
+                if (m.index === re.lastIndex)
+                    re.lastIndex++;
+                continue;
+            }
             // Promote severity for child_process inside install scripts
             let severity = typeof det.severity === "function" ? det.severity(m) : det.severity;
             if (det.type === "child_process" && isInstallScript)
@@ -219,7 +235,7 @@ function detect(file, content) {
                 severity,
                 file,
                 line: lineOf(content, m.index),
-                snippet: snippet(content, m.index),
+                snippet: snip,
                 description: det.description,
             });
             count++;
@@ -315,7 +331,7 @@ async function deepScanAll(deps, onProgress) {
             return r;
         }));
         for (const r of settled) {
-            if (r && (r.findings.length > 0 || r.scriptsPresent))
+            if (r && (r.findings.length > 0 || r.scriptsPresent || r.error))
                 results.push(r);
         }
     }

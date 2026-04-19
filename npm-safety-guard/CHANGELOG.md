@@ -2,6 +2,12 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.4.1] — 2026-04-19
+
+### Fixed
+- **False-positive removed:** `new Function('return this')()` / `new Function('return globalThis')()` (the ubiquitous globalThis polyfill used by lodash, jQuery, axios, core-js, etc.) is no longer flagged. Post-match benign-pattern filter in the detector loop.
+- **Download failures now visible:** packages whose tarball returns 404 (unpublished, typo, or network error) are now surfaced in the Deep Scan report with a dedicated "Unreachable" stat. Previously they were silently dropped, making failed scans look "clean".
+
 ## [1.4.0] — 2026-04-19
 
 ### Added
