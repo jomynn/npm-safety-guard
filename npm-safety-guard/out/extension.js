@@ -11,12 +11,14 @@ const installScriptChecker_1 = require("./installScriptChecker");
 const deepScanner_1 = require("./deepScanner");
 const lockfileScanner_1 = require("./lockfileScanner");
 const registryHeuristics_1 = require("./registryHeuristics");
+const typosquatChecker_1 = require("./typosquatChecker");
 // ─── Globals ──────────────────────────────────────────────────────────────────
 let diagnosticCollection;
 let statusBarItem;
 let decorationType;
 let osvDecorationType;
 let scriptDecorationType;
+let typosquatDecorationType;
 // ─── Activation ───────────────────────────────────────────────────────────────
 function activate(context) {
     console.log("NPM Safety Guard is active");
@@ -59,6 +61,20 @@ function activate(context) {
         },
     });
     context.subscriptions.push(cveDecorationType);
+    // Typosquat / homoglyph decoration (purple — name-level attack)
+    typosquatDecorationType = vscode.window.createTextEditorDecorationType({
+        backgroundColor: "rgba(168, 85, 247, 0.10)",
+        border: "1px solid rgba(168, 85, 247, 0.45)",
+        borderRadius: "2px",
+        overviewRulerColor: "rgba(168, 85, 247, 0.8)",
+        overviewRulerLane: vscode.OverviewRulerLane.Right,
+        after: {
+            contentText: "  ⚠ TYPOSQUAT?",
+            color: "rgba(168, 85, 247, 0.95)",
+            fontWeight: "bold",
+        },
+    });
+    context.subscriptions.push(typosquatDecorationType);
     // Install-script decoration (gold dashed — behavioral concern, not malicious)
     scriptDecorationType = vscode.window.createTextEditorDecorationType({
         backgroundColor: "rgba(234, 179, 8, 0.06)",
@@ -111,6 +127,45 @@ function activate(context) {
     }));
     context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.scanLockfile", async () => {
         await runLockfileScan();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.checkTyposquat", async () => {
+        const editor = vscode.window.activeTextEditor;
+        let doc;
+        if (editor && isPackageJson(editor.document)) {
+            doc = editor.document;
+        }
+        else {
+            const uris = await vscode.workspace.findFiles("**/package.json", "**/node_modules/**", 1);
+            if (uris.length > 0)
+                doc = await vscode.workspace.openTextDocument(uris[0]);
+        }
+        if (!doc) {
+            vscode.window.showInformationMessage("NPM Safety Guard: No package.json found.");
+            return;
+        }
+        let parsed;
+        try {
+            parsed = JSON.parse(doc.getText());
+        }
+        catch {
+            vscode.window.showErrorMessage("NPM Safety Guard: Cannot parse package.json.");
+            return;
+        }
+        const deps = {
+            ...(parsed.dependencies || {}),
+            ...(parsed.devDependencies || {}),
+            ...(parsed.peerDependencies || {}),
+            ...(parsed.optionalDependencies || {}),
+        };
+        const hits = (0, typosquatChecker_1.checkAllPackageNames)(deps);
+        const ed = editor && editor.document.uri.toString() === doc.uri.toString() ? editor : undefined;
+        applyTyposquatDiagnostics(doc, ed, deps);
+        if (hits.length === 0) {
+            vscode.window.showInformationMessage("NPM Safety Guard: No typosquat / homoglyph patterns found.");
+        }
+        else {
+            vscode.window.showWarningMessage(`NPM Safety Guard: ${hits.length} suspicious package name(s) detected.`);
+        }
     }));
     context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.checkHeuristics", async () => {
         (0, registryHeuristics_1.clearHeuristicsCache)();
@@ -265,6 +320,10 @@ function scanDocument(doc, editor) {
     if (editor && getConfig("showInlineDecorations")) {
         applyDecorations(editor, hits);
     }
+    // Typosquat / homoglyph check (instant, offline)
+    if (vscode.workspace.getConfiguration("npmSafetyGuard").get("enableTyposquat", true)) {
+        applyTyposquatDiagnostics(doc, editor, allDeps);
+    }
     updateStatusBar(hits.length, doc.uri);
     // Fire-and-forget OSV scan in background (free, no auth, unlimited)
     if (vscode.workspace.getConfiguration("npmSafetyGuard").get("enableOSV", true)) {
@@ -306,6 +365,67 @@ function applyDiagnostics(doc, hits) {
         return d;
     });
     diagnosticCollection.set(doc.uri, diagnostics);
+}
+// ─── Typosquat / Homoglyph diagnostics ────────────────────────────────────────
+function applyTyposquatDiagnostics(doc, editor, deps) {
+    const hits = (0, typosquatChecker_1.checkAllPackageNames)(deps);
+    const diagnostics = hits.map((hit) => {
+        const line = Math.max(0, findLineForPackage(doc, hit.package, hit.version));
+        const lineText = doc.lineAt(line).text;
+        const range = new vscode.Range(line, 0, line, lineText.length);
+        const severity = hit.reason === "homoglyph" ? vscode.DiagnosticSeverity.Error
+            : hit.reason === "typosquat" ? vscode.DiagnosticSeverity.Warning
+                : vscode.DiagnosticSeverity.Information;
+        const d = new vscode.Diagnostic(range, `[NPM Safety Guard / Typosquat] ${hit.package}\n${hit.note}`, severity);
+        d.source = "npm-safety-guard(typosquat)";
+        if (hit.closestMatch) {
+            d.code = {
+                value: `${hit.package} → ${hit.closestMatch}`,
+                target: vscode.Uri.parse(`https://www.npmjs.com/package/${hit.closestMatch}`),
+            };
+        }
+        return d;
+    });
+    // Replace only typosquat-source diagnostics
+    const existing = diagnosticCollection.get(doc.uri) ?? [];
+    const nonTypo = existing.filter((d) => d.source !== "npm-safety-guard(typosquat)");
+    diagnosticCollection.set(doc.uri, [...nonTypo, ...diagnostics]);
+    // Inline purple decorations — skip packages already flagged as malicious (red wins)
+    const activeEditor = editor ?? vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === doc.uri.toString());
+    if (activeEditor && getConfig("showInlineDecorations")) {
+        const flaggedByBundled = new Set((diagnosticCollection.get(doc.uri) ?? [])
+            .filter((d) => d.source === "npm-safety-guard")
+            .map((d) => typeof d.code === "object" ? d.code.value : undefined));
+        const decorations = hits
+            .filter((hit) => !flaggedByBundled.has(`${hit.package}@${hit.version}`))
+            .map((hit) => {
+            const line = Math.max(0, findLineForPackage(doc, hit.package, hit.version));
+            const lineText = activeEditor.document.lineAt(line).text;
+            const md = new vscode.MarkdownString(buildTyposquatHoverMarkdown(hit));
+            md.isTrusted = true;
+            return { range: new vscode.Range(line, 0, line, lineText.length), hoverMessage: md };
+        });
+        activeEditor.setDecorations(typosquatDecorationType, decorations);
+    }
+}
+function buildTyposquatHoverMarkdown(hit) {
+    const icon = hit.reason === "homoglyph" ? "👁️ Homoglyph attack"
+        : hit.reason === "typosquat" ? "🔍 Possible typosquat"
+            : "⚠️ Non-ASCII package name";
+    let md = `### ${icon}\n\n`;
+    md += `**Package:** \`${hit.package}\`\n\n`;
+    if (hit.closestMatch) {
+        md += `**Did you mean:** \`${hit.closestMatch}\`${hit.distance !== undefined ? ` *(edit distance ${hit.distance})*` : ""}\n\n`;
+    }
+    md += `${hit.note}\n\n`;
+    if (hit.closestMatch) {
+        md += `**Quick fix:**\n\`\`\`bash\nnpm uninstall ${hit.package}\nnpm install ${hit.closestMatch}\n\`\`\`\n\n`;
+        md += `[View "${hit.closestMatch}" on npmjs.com](https://www.npmjs.com/package/${hit.closestMatch})`;
+    }
+    else {
+        md += `[View "${hit.package}" on npmjs.com](https://www.npmjs.com/package/${encodeURIComponent(hit.package)})`;
+    }
+    return md;
 }
 // ─── Inline Decorations ───────────────────────────────────────────────────────
 function applyDecorations(editor, hits) {

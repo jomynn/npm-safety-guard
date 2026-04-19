@@ -2,6 +2,16 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.7.0] — 2026-04-19
+
+### Added
+- **Typosquat detector** — Damerau-Levenshtein distance against a curated 250-package top-popular list. Catches `axioss → axios`, `loadash → lodash`, `expres → express`, `raect → react` (transposition handled), `chal-k → chalk`, and `mongose → mongoose`. Length pre-filter keeps the comparison ~O(n) per dep.
+- **Homoglyph detector** — recognises 30+ Cyrillic and Greek lookalikes (`а`/`a`, `с`/`c`, `е`/`e`, `о`/`o`, `р`/`p`, `х`/`x`, `α`, `ε`, `ο`, `ρ`, etc.). After mapping to ASCII, if the normalised name hits a popular package, raises ERROR severity. Catches `rеact` (Cyrillic 'е') and `аxios` (Cyrillic 'а').
+- **Non-ASCII package name flag** — packages with Unicode chars that don't normalise to a known popular name still get a warning with the exact code points (`U+65E5 U+672C U+8A9E`).
+- **Purple inline decoration** with `⚠ TYPOSQUAT?` marker; hover shows the closest match plus a ready-to-paste `npm uninstall` + `npm install` fix snippet.
+- New setting `npmSafetyGuard.enableTyposquat` (default on) and command `NPM Safety Guard: Check Typosquats / Homoglyphs`.
+- Pure offline — zero HTTP, runs synchronously inside auto-scan.
+
 ## [1.6.0] — 2026-04-19
 
 ### Added

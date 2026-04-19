@@ -11,6 +11,7 @@ Detects malicious npm packages and CVE vulnerabilities in your `package.json` **
 - 🔬 **Deep tarball scanner** — on-demand command downloads each published tarball and regex-scans for `eval`, `new Function`, base64 blobs, `String.fromCharCode` reconstruction, split-file payloads, credential-path writes, Shai-Hulud-style self-publish, and obfuscation fingerprints
 - 📋 **Lockfile scanner** — walks your `package-lock.json` / `yarn.lock` and checks every resolved transitive dep, catching compromises like flatmap-stream-via-event-stream that a package.json-only scan misses
 - 📊 **Risk heuristics** — scores each dependency 0–100 from npm registry metadata: package age, version age, maintainer takeover (publisher not in maintainers list), deprecation, and weekly download velocity
+- 🔍 **Typosquat & homoglyph detector** — Damerau-Levenshtein vs a top-250 package list catches `axioss → axios` / `raect → react`. Cyrillic/Greek lookalikes (`rеact` with a Cyrillic 'е') flagged as ERROR. Instant, offline
 - 🔵 **OSV.dev CVE scanning** — every save queries Google's OSV.dev for every known CVE in the npm ecosystem. Free, no API key required
 - 🟠 **ReversingLabs deep scan** — optional premium CVE + malware analysis (free token at [secure.software](https://secure.software))
 - 📋 **Security Report** webview with fix instructions and copy-ready `npm install` commands
@@ -26,6 +27,7 @@ Detects malicious npm packages and CVE vulnerabilities in your `package.json` **
 | Remote malware feed | ✅ on | Community feed, refreshed every 24h | Yes (fail-open) |
 | OSV.dev CVE scan | ✅ on | Every known CVE across npm ecosystem | Yes (fail-open) |
 | Install-script audit | ✅ on | Packages with preinstall/postinstall hooks | Yes (fail-open) |
+| Typosquat / homoglyph | ✅ on | Name-similarity attacks (instant, offline) | No |
 | Deep tarball scan | On-demand | Obfuscation, eval, payload blobs, self-publish | Yes (command) |
 | ReversingLabs deep scan | Opt-in | Binary analysis, tampering detection | Yes (token required) |
 
@@ -59,6 +61,7 @@ Open the command palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 - **NPM Safety Guard: Deep Scan All Dependencies (tarball AST)** — download and inspect every tarball for eval, obfuscation, split-file payloads (opens a detailed webview report)
 - **NPM Safety Guard: Scan Lockfile (full resolved tree)** — walk `package-lock.json` / `yarn.lock` and check every transitive dep against all detection layers
 - **NPM Safety Guard: Compute Risk Heuristics** — score each dependency 0–100 from npm metadata (age, maintainers, downloads, deprecation)
+- **NPM Safety Guard: Check Typosquats / Homoglyphs** — instant offline name-similarity scan (also runs on every save)
 
 Or click the 🛡 shield in the status bar to open the security report.
 
