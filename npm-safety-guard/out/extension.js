@@ -9,6 +9,7 @@ const osvChecker_1 = require("./osvChecker");
 const remoteDb_1 = require("./remoteDb");
 const installScriptChecker_1 = require("./installScriptChecker");
 const deepScanner_1 = require("./deepScanner");
+const lockfileScanner_1 = require("./lockfileScanner");
 // ─── Globals ──────────────────────────────────────────────────────────────────
 let diagnosticCollection;
 let statusBarItem;
@@ -106,6 +107,9 @@ function activate(context) {
         }
     }), vscode.commands.registerCommand("npmSafetyGuard.showReport", () => {
         showWebviewReport(context);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.scanLockfile", async () => {
+        await runLockfileScan();
     }));
     context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.deepScan", async () => {
         (0, deepScanner_1.clearDeepScanCache)();
@@ -867,6 +871,267 @@ async function scanInstallScripts(doc, editor, opts = {}) {
             });
         }
     }
+}
+// ─── Lockfile Scanner ─────────────────────────────────────────────────────────
+let lockfilePanel;
+async function runLockfileScan() {
+    // Find a lockfile in the workspace
+    const candidates = await vscode.workspace.findFiles("**/{package-lock.json,yarn.lock,npm-shrinkwrap.json}", "**/node_modules/**", 5);
+    if (candidates.length === 0) {
+        vscode.window.showInformationMessage("NPM Safety Guard: No package-lock.json or yarn.lock found in workspace.");
+        return;
+    }
+    const pick = candidates.length === 1
+        ? candidates[0]
+        : await vscode.window.showQuickPick(candidates.map((u) => ({ label: vscode.workspace.asRelativePath(u), uri: u })), { placeHolder: "Choose a lockfile to scan" }).then((p) => p?.uri);
+    if (!pick)
+        return;
+    const summary = await (0, lockfileScanner_1.parseLockfile)(pick.fsPath);
+    if (!summary) {
+        vscode.window.showErrorMessage(`NPM Safety Guard: Could not parse ${vscode.workspace.asRelativePath(pick)}.`);
+        return;
+    }
+    // Flatten to name→version map (keep one version per name — the first seen)
+    const depsMap = {};
+    const multiVersion = new Map();
+    for (const d of summary.uniqueDeps) {
+        if (!depsMap[d.name])
+            depsMap[d.name] = d.version;
+        if (!multiVersion.has(d.name))
+            multiVersion.set(d.name, new Set());
+        multiVersion.get(d.name).add(d.version);
+    }
+    // Because bundled DB + OSV + install-script checks all take `name→version`,
+    // we actually need to scan every UNIQUE name@version pair. Build a special
+    // map where the "name" is the real name and we call each checker per pair.
+    const pairs = summary.uniqueDeps;
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `NPM Safety Guard: Scanning ${pairs.length} resolved dependencies from ${summary.format}…`,
+        cancellable: false,
+    }, async (progress) => {
+        progress.report({ message: "Bundled DB + remote feed…" });
+        const bundledHits = [];
+        for (const p of pairs) {
+            const pair = (0, maliciousDb_1.checkDependencies)({ [p.name]: p.version });
+            bundledHits.push(...pair);
+        }
+        // OSV.dev per-pair lookup. Going one-by-one because multiple versions of
+        // the same name share a key in the `checkAllPackagesOSV({name: ver})` map.
+        const osvResults = [];
+        const CONC = 16;
+        for (let i = 0; i < pairs.length; i += CONC) {
+            const slice = pairs.slice(i, i + CONC);
+            const settled = await Promise.all(slice.map(({ name, version }) => (0, osvChecker_1.checkAllPackagesOSV)({ [name]: version }).then((rs) => rs[0] ?? null)));
+            for (const r of settled)
+                if (r)
+                    osvResults.push(r);
+            progress.report({
+                message: `OSV ${Math.min(i + CONC, pairs.length)}/${pairs.length}…`,
+                increment: (CONC / pairs.length) * 100,
+            });
+        }
+        progress.report({ message: "Install-script audit…" });
+        const scriptDeps = {};
+        for (const p of pairs)
+            scriptDeps[`${p.name}`] = p.version;
+        // install-script audit runs per unique name — acceptable loss for MVP
+        const customWhitelist = vscode.workspace
+            .getConfiguration("npmSafetyGuard")
+            .get("scriptWhitelist", []);
+        const scriptHits = await (0, installScriptChecker_1.checkAllInstallScripts)(scriptDeps, customWhitelist);
+        showLockfileReport(pick.fsPath, summary, bundledHits, osvResults, scriptHits, multiVersion);
+    });
+}
+function showLockfileReport(lockfilePath, summary, bundledHits, osvHits, scriptHits, multiVersion) {
+    if (lockfilePanel) {
+        lockfilePanel.reveal(vscode.ViewColumn.One);
+    }
+    else {
+        lockfilePanel = vscode.window.createWebviewPanel("npmSafetyGuardLockfile", "NPM Safety Guard — Lockfile Scan", vscode.ViewColumn.One, { enableScripts: false });
+        lockfilePanel.onDidDispose(() => { lockfilePanel = undefined; });
+    }
+    lockfilePanel.webview.html = buildLockfileHtml(lockfilePath, summary, bundledHits, osvHits, scriptHits, multiVersion);
+}
+function buildLockfileHtml(lockfilePath, summary, bundledHits, osvHits, scriptHits, multiVersion) {
+    const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const totalUnique = summary.uniqueDeps.length;
+    const totalBundled = bundledHits.length;
+    const totalCVEs = osvHits.length;
+    const totalScripts = scriptHits.length;
+    const duplicated = [...multiVersion.entries()].filter(([, set]) => set.size > 1);
+    const now = new Date().toLocaleString();
+    const bundledHtml = bundledHits.length === 0 ? "" : `
+    <h2 class="section">🔴 Known Malicious (${bundledHits.length})</h2>
+    ${bundledHits.map((h) => `
+      <div class="hit critical">
+        <div class="hit-header">
+          <span class="badge critical">${h.entry.severity.toUpperCase()}</span>
+          <strong>${escape(h.entry.title)}</strong>
+        </div>
+        <code>${escape(h.name)}@${escape(h.version)}</code>
+        ${h.entry.safeVersion ? `<span class="safe"> → safe: <code>${escape(h.name)}@${escape(h.entry.safeVersion)}</code></span>` : ""}
+        <p class="desc">${escape(h.entry.description)}</p>
+      </div>
+    `).join("")}
+  `;
+    const cveHtml = osvHits.length === 0 ? "" : `
+    <h2 class="section">🔵 CVEs (${osvHits.length})</h2>
+    ${osvHits.map((h) => `
+      <div class="hit ${h.riskLevel}">
+        <div class="hit-header">
+          <span class="badge ${h.riskLevel}">${h.riskLevel.toUpperCase()}</span>
+          <code>${escape(h.package)}@${escape(h.version)}</code>
+          <span class="meta">${h.vulnerabilities.length} vuln(s)</span>
+        </div>
+        <ul class="vulns">
+          ${h.vulnerabilities.slice(0, 3).map((v) => `
+            <li><code>${escape(v.id)}</code>${v.fixedVersion ? ` — fix in <code>${escape(v.fixedVersion)}</code>` : ""} — ${escape(v.summary || "")}</li>
+          `).join("")}
+          ${h.vulnerabilities.length > 3 ? `<li><em>…and ${h.vulnerabilities.length - 3} more</em></li>` : ""}
+        </ul>
+      </div>
+    `).join("")}
+  `;
+    const scriptHtml = scriptHits.length === 0 ? "" : `
+    <h2 class="section">🟡 Install Scripts (${scriptHits.length})</h2>
+    ${scriptHits.map((h) => `
+      <div class="hit medium">
+        <div class="hit-header">
+          <code>${escape(h.package)}@${escape(h.version)}</code>
+          <span class="meta">${Object.keys(h.scripts).join(", ")}</span>
+        </div>
+      </div>
+    `).join("")}
+  `;
+    const dupHtml = duplicated.length === 0 ? "" : `
+    <h2 class="section">⚠ Multiple versions resolved (${duplicated.length})</h2>
+    <p class="meta">Packages pinned to more than one version in the tree — unusual, sometimes a dep-confusion signal.</p>
+    <div class="duplist">
+      ${duplicated.slice(0, 20).map(([name, versions]) => `
+        <div class="duprow">
+          <code>${escape(name)}</code>
+          <span class="dup-versions">${[...versions].map((v) => `<code>${escape(v)}</code>`).join(" ")}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+    const allClean = totalBundled + totalCVEs + totalScripts === 0;
+    const cleanBlock = allClean
+        ? `<div class="clean"><span class="icon">✅</span><h2>Lockfile is clean</h2><p>Scanned ${totalUnique} unique resolved packages from ${summary.format}. No known malicious, CVE, or install-script findings.</p></div>`
+        : "";
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NPM Safety Guard — Lockfile Scan</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0d1117; color: #c9d1d9;
+    padding: 24px; line-height: 1.6;
+  }
+  h1 { font-size: 1.4rem; color: #f0f6fc; margin-bottom: 4px; }
+  h2.section { font-size: 1rem; color: #8b949e; margin: 24px 0 12px;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    border-bottom: 1px solid #21262d; padding-bottom: 6px; }
+  .meta { color: #8b949e; font-size: 0.85rem; margin-bottom: 24px; }
+  .summary { display: flex; gap: 12px; margin-bottom: 28px; flex-wrap: wrap; }
+  .stat {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 14px 20px; min-width: 130px; text-align: center;
+  }
+  .stat .num { font-size: 2rem; font-weight: 800; }
+  .stat .lbl { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat.danger .num { color: #f85149; }
+  .stat.warn .num { color: #d29922; }
+  .stat.ok .num { color: #3fb950; }
+  .stat.info .num { color: #388bfd; }
+  .hit {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; padding: 12px 16px; margin-bottom: 8px;
+  }
+  .hit.critical { border-left: 4px solid #f85149; }
+  .hit.high     { border-left: 4px solid #d29922; }
+  .hit.medium   { border-left: 4px solid #388bfd; }
+  .hit.low      { border-left: 4px solid #3fb950; }
+  .hit-header { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+  .badge {
+    font-size: 0.65rem; font-weight: 700; padding: 2px 7px;
+    border-radius: 99px; text-transform: uppercase;
+  }
+  .badge.critical { background: #f85149; color: #fff; }
+  .badge.high     { background: #d29922; color: #000; }
+  .badge.medium   { background: #388bfd; color: #fff; }
+  .badge.low      { background: #3fb950; color: #000; }
+  code {
+    background: #0d1117; padding: 2px 6px; border-radius: 3px;
+    font-family: 'Cascadia Code', monospace; font-size: 0.85rem;
+  }
+  .safe { color: #3fb950; font-size: 0.85rem; }
+  .desc { color: #8b949e; font-size: 0.85rem; margin-top: 4px; }
+  .vulns { list-style: none; margin-top: 6px; font-size: 0.85rem; color: #c9d1d9; }
+  .vulns li { margin-bottom: 3px; padding-left: 12px; position: relative; }
+  .vulns li:before { content: "•"; position: absolute; left: 0; color: #8b949e; }
+  .duplist { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 16px; }
+  .duprow { display: flex; justify-content: space-between; padding: 4px 0; gap: 10px; }
+  .dup-versions code { margin-left: 4px; }
+  .clean {
+    text-align: center; padding: 60px 20px;
+    border: 1px dashed #30363d; border-radius: 12px; color: #3fb950;
+  }
+  .clean .icon { font-size: 3rem; display: block; margin-bottom: 12px; }
+  .clean h2 { font-size: 1.4rem; margin-bottom: 8px; }
+  .clean p { color: #8b949e; }
+  .footer {
+    margin-top: 32px; padding-top: 16px;
+    border-top: 1px solid #30363d;
+    font-size: 12px; color: #8b949e; text-align: center;
+  }
+  .footer a { color: #388bfd; text-decoration: none; }
+</style>
+</head>
+<body>
+  <h1>📋 Lockfile Scan Report</h1>
+  <p class="meta">${escape(lockfilePath)} · ${summary.format} · ${now}</p>
+
+  <div class="summary">
+    <div class="stat ok">
+      <div class="num">${totalUnique}</div>
+      <div class="lbl">Unique Resolved</div>
+    </div>
+    <div class="stat ${totalBundled === 0 ? 'ok' : 'danger'}">
+      <div class="num">${totalBundled}</div>
+      <div class="lbl">Known Malicious</div>
+    </div>
+    <div class="stat ${totalCVEs === 0 ? 'ok' : 'warn'}">
+      <div class="num">${totalCVEs}</div>
+      <div class="lbl">CVEs</div>
+    </div>
+    <div class="stat ${totalScripts === 0 ? 'ok' : 'info'}">
+      <div class="num">${totalScripts}</div>
+      <div class="lbl">Install Scripts</div>
+    </div>
+    <div class="stat ${duplicated.length === 0 ? 'ok' : 'info'}">
+      <div class="num">${duplicated.length}</div>
+      <div class="lbl">Dup Versions</div>
+    </div>
+  </div>
+
+  ${cleanBlock}
+  ${bundledHtml}
+  ${cveHtml}
+  ${scriptHtml}
+  ${dupHtml}
+
+  <div class="footer">
+    Lockfile scanner walks every resolved version in package-lock.json / yarn.lock —
+    catches transitive compromises like flatmap-stream-via-event-stream.
+    <br>Built by <a href="https://sendwavehub.tech">SendWaveHub</a>
+  </div>
+</body>
+</html>`;
 }
 // ─── Deep Scanner ─────────────────────────────────────────────────────────────
 let deepScanPanel;

@@ -2,6 +2,13 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.5.0] — 2026-04-19
+
+### Added
+- **Lockfile scanner** — new command `NPM Safety Guard: Scan Lockfile (full resolved tree)` parses `package-lock.json` (npm v1/v2/v3) and `yarn.lock` (classic v1), extracts every resolved `name@version` in the full dependency tree, and runs the bundled DB + remote feed + OSV.dev CVE lookup + install-script audit against each.
+- **Closes the transitive-compromise gap** surfaced during v1.4.0 test-drive: a package.json-only scan misses bundled malware like `flatmap-stream@0.1.1` (shipped via `event-stream@3.3.6`). The lockfile scan walks every pinned version.
+- **Dedicated webview report** with summary stats, per-layer hit blocks, and a "Multiple Versions Resolved" section that flags duplicate-version oddities (dep-confusion signal).
+
 ## [1.4.1] — 2026-04-19
 
 ### Fixed

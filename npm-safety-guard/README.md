@@ -9,6 +9,7 @@ Detects malicious npm packages and CVE vulnerabilities in your `package.json` **
 - 🔴 **Live malware DB** — bundled list of known supply chain attacks (Shai-Hulud, Axios/DPRK RAT, Lazarus/Marstech, event-stream, node-ipc, more), auto-refreshed daily from a community feed on GitHub
 - 🟡 **Install-script auditor** — flags every dependency that ships `preinstall` / `install` / `postinstall` / `prepare` hooks (the #1 attack vector). Curated whitelist for legit packages
 - 🔬 **Deep tarball scanner** — on-demand command downloads each published tarball and regex-scans for `eval`, `new Function`, base64 blobs, `String.fromCharCode` reconstruction, split-file payloads, credential-path writes, Shai-Hulud-style self-publish, and obfuscation fingerprints
+- 📋 **Lockfile scanner** — walks your `package-lock.json` / `yarn.lock` and checks every resolved transitive dep, catching compromises like flatmap-stream-via-event-stream that a package.json-only scan misses
 - 🔵 **OSV.dev CVE scanning** — every save queries Google's OSV.dev for every known CVE in the npm ecosystem. Free, no API key required
 - 🟠 **ReversingLabs deep scan** — optional premium CVE + malware analysis (free token at [secure.software](https://secure.software))
 - 📋 **Security Report** webview with fix instructions and copy-ready `npm install` commands
@@ -55,6 +56,7 @@ Open the command palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 - **NPM Safety Guard: Refresh Malware Database** — pull the latest remote feed now
 - **NPM Safety Guard: Audit Install Scripts (preinstall/postinstall)** — re-fetch and flag dependency install hooks
 - **NPM Safety Guard: Deep Scan All Dependencies (tarball AST)** — download and inspect every tarball for eval, obfuscation, split-file payloads (opens a detailed webview report)
+- **NPM Safety Guard: Scan Lockfile (full resolved tree)** — walk `package-lock.json` / `yarn.lock` and check every transitive dep against all detection layers
 
 Or click the 🛡 shield in the status bar to open the security report.
 
