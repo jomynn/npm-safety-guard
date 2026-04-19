@@ -1130,7 +1130,16 @@ async function scanInstallScripts(doc, editor, opts = {}) {
     const customWhitelist = vscode.workspace
         .getConfiguration("npmSafetyGuard")
         .get("scriptWhitelist", []);
-    const hits = await (0, installScriptChecker_1.checkAllInstallScripts)(allDeps, customWhitelist);
+    const rawHits = await (0, installScriptChecker_1.checkAllInstallScripts)(allDeps, customWhitelist);
+    // Filter out prepare-only hits unless the user explicitly opts in.
+    // `prepare` scripts don't run for registry installs (only git URL / local
+    // folder installs), so they're not a real attack vector for the common case.
+    const flagPrepareHooks = vscode.workspace
+        .getConfiguration("npmSafetyGuard")
+        .get("flagPrepareHooks", false);
+    const hits = flagPrepareHooks
+        ? rawHits
+        : rawHits.filter((h) => !(0, installScriptChecker_1.isPrepareOnly)(h));
     // Diagnostics — keep at Information so they don't drown the Problems panel
     const scriptDiagnostics = hits.map((hit) => {
         const line = Math.max(0, findLineForPackage(doc, hit.package, hit.version));

@@ -2,7 +2,7 @@
   "name": "npm-safety-guard",
   "displayName": "NPM Safety Guard",
   "description": "Detects malicious npm packages, CVEs, and risky install hooks before installation. Live OSV.dev + supply chain attack DB (Shai-Hulud, Axios/DPRK RAT, Lazarus, event-stream). By SendWaveHub.",
-  "version": "1.8.2",
+  "version": "1.8.3",
   "publisher": "Sendwavehubtech",
   "author": {
     "name": "SendWaveHub",
@@ -114,6 +114,11 @@
           "items": { "type": "string" },
           "default": [],
           "description": "Additional package names to suppress from install-script warnings (e.g. internal tooling). Bundled whitelist already covers bcrypt, sharp, esbuild, husky, prisma, sqlite3, etc."
+        },
+        "npmSafetyGuard.flagPrepareHooks": {
+          "type": "boolean",
+          "default": false,
+          "description": "Flag packages that only declare a `prepare` script. `prepare` runs on git-URL / local-folder installs, but NOT on normal `npm install <name>` from the registry — so flagging it creates noise for most users. Enable this if you install dependencies from git URLs."
         },
         "npmSafetyGuard.enableTyposquat": {
           "type": "boolean",

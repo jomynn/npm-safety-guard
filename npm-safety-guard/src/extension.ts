@@ -3,7 +3,7 @@ import { checkDependencies, MaliciousEntry, setRemoteEntries } from "./malicious
 import { checkAllPackagesRL, clearRLCache, RLResult } from "./rlChecker";
 import { checkAllPackagesOSV, clearOSVCache, OSVResult } from "./osvChecker";
 import { fetchRemoteEntries, DEFAULT_DB_URL } from "./remoteDb";
-import { checkAllInstallScripts, clearScriptCache, ScriptCheckResult } from "./installScriptChecker";
+import { checkAllInstallScripts, clearScriptCache, isPrepareOnly, ScriptCheckResult } from "./installScriptChecker";
 import { deepScanAll, clearDeepScanCache, DeepScanResult, DeepScanFinding } from "./deepScanner";
 import { parseLockfile, LockfileSummary } from "./lockfileScanner";
 import { checkAllHeuristics, clearHeuristicsCache, RegistrySignals } from "./registryHeuristics";
@@ -1333,7 +1333,17 @@ async function scanInstallScripts(
     .getConfiguration("npmSafetyGuard")
     .get<string[]>("scriptWhitelist", []);
 
-  const hits = await checkAllInstallScripts(allDeps, customWhitelist);
+  const rawHits = await checkAllInstallScripts(allDeps, customWhitelist);
+
+  // Filter out prepare-only hits unless the user explicitly opts in.
+  // `prepare` scripts don't run for registry installs (only git URL / local
+  // folder installs), so they're not a real attack vector for the common case.
+  const flagPrepareHooks = vscode.workspace
+    .getConfiguration("npmSafetyGuard")
+    .get<boolean>("flagPrepareHooks", false);
+  const hits = flagPrepareHooks
+    ? rawHits
+    : rawHits.filter((h) => !isPrepareOnly(h));
 
   // Diagnostics — keep at Information so they don't drown the Problems panel
   const scriptDiagnostics: vscode.Diagnostic[] = hits.map((hit) => {

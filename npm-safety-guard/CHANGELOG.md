@@ -2,6 +2,15 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.8.3] — 2026-04-19
+
+### Fixed
+- **No more `prepare`-hook false positives.** The install-script auditor previously flagged every package that declared *any* install hook, including `prepare`. Per the [npm docs](https://docs.npmjs.com/cli/v10/using-npm/scripts#npm-install), `prepare` only runs when installing from a git URL or local folder — NOT when installing from the npm registry (the common case). So flagging packages like `axios`, `zod`, `uuid`, `bullmq`, `posthog-js`, `recharts`, `@anthropic-ai/sdk`, `expo-av`, `expo-camera`, and friends was noise. They're now silenced by default.
+- `preinstall`, `install`, and `postinstall` — the hooks that actually run on every registry install — remain flagged as the real attack surface.
+
+### Added
+- New setting `npmSafetyGuard.flagPrepareHooks` (default `false`). Set to `true` if you install dependencies via `npm install git+https://...` or from local folders, where `prepare` does execute.
+
 ## [1.8.2] — 2026-04-19
 
 ### Fixed

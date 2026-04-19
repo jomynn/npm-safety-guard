@@ -198,3 +198,22 @@ export function clearScriptCache(): void {
 export function isWhitelisted(name: string, customWhitelist: string[] = []): boolean {
   return DEFAULT_WHITELIST.has(name) || customWhitelist.includes(name);
 }
+
+/**
+ * True if the only install-time hook a package ships is `prepare`.
+ *
+ * Per the npm docs, `prepare` runs (a) before `npm publish`/`npm pack` on
+ * the maintainer's machine and (b) when installing from a git URL or a
+ * local folder. It does NOT run when `npm install <name>` pulls from the
+ * npm registry — which is the overwhelmingly common case. So a package
+ * with only a `prepare` hook is NOT an install-time attack vector for
+ * registry installs and flagging it generates false-positive noise.
+ *
+ * `preinstall`/`install`/`postinstall` run on every registry install and
+ * remain the real attack surface.
+ */
+export function isPrepareOnly(result: ScriptCheckResult): boolean {
+  const keys = Object.keys(result.scripts);
+  if (keys.length === 0) return false;
+  return keys.length === 1 && keys[0] === "prepare";
+}
