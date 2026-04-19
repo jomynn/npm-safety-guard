@@ -5,13 +5,18 @@ exports.deactivate = deactivate;
 const vscode = require("vscode");
 const maliciousDb_1 = require("./maliciousDb");
 const rlChecker_1 = require("./rlChecker");
+const osvChecker_1 = require("./osvChecker");
+const remoteDb_1 = require("./remoteDb");
 // ─── Globals ──────────────────────────────────────────────────────────────────
 let diagnosticCollection;
 let statusBarItem;
 let decorationType;
+let osvDecorationType;
 // ─── Activation ───────────────────────────────────────────────────────────────
 function activate(context) {
     console.log("NPM Safety Guard is active");
+    // Pull the remote malicious-package feed in the background — non-blocking.
+    void refreshRemoteDb(context);
     // Diagnostic collection (Problems panel)
     diagnosticCollection = vscode.languages.createDiagnosticCollection("npm-safety-guard");
     context.subscriptions.push(diagnosticCollection);
@@ -49,6 +54,20 @@ function activate(context) {
         },
     });
     context.subscriptions.push(cveDecorationType);
+    // OSV.dev decoration type (blue highlight — free CVE feed, always-on)
+    osvDecorationType = vscode.window.createTextEditorDecorationType({
+        backgroundColor: "rgba(56, 139, 253, 0.10)",
+        border: "1px solid rgba(56, 139, 253, 0.35)",
+        borderRadius: "2px",
+        overviewRulerColor: "rgba(56, 139, 253, 0.8)",
+        overviewRulerLane: vscode.OverviewRulerLane.Right,
+        after: {
+            contentText: "  ⚠ CVE (OSV)",
+            color: "rgba(56, 139, 253, 0.95)",
+            fontWeight: "bold",
+        },
+    });
+    context.subscriptions.push(osvDecorationType);
     // Commands
     context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.scanNow", () => {
         const editor = vscode.window.activeTextEditor;
@@ -70,6 +89,30 @@ function activate(context) {
         }
     }), vscode.commands.registerCommand("npmSafetyGuard.showReport", () => {
         showWebviewReport(context);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.refreshDb", async () => {
+        const result = await refreshRemoteDb(context, /*force*/ true);
+        const msg = result.source === "network"
+            ? `NPM Safety Guard: Fetched ${result.entries.length} remote entries.`
+            : result.source === "cache"
+                ? `NPM Safety Guard: Network unreachable — using cached ${result.entries.length} entries.`
+                : "NPM Safety Guard: No remote entries available.";
+        vscode.window.showInformationMessage(msg);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.scanOSV", async () => {
+        (0, osvChecker_1.clearOSVCache)();
+        const editor = vscode.window.activeTextEditor;
+        if (editor && isPackageJson(editor.document)) {
+            await scanWithOSV(editor.document, editor);
+        }
+        else {
+            const uris = await vscode.workspace.findFiles("**/package.json", "**/node_modules/**", 20);
+            for (const uri of uris) {
+                const doc = await vscode.workspace.openTextDocument(uri);
+                await scanWithOSV(doc);
+            }
+            vscode.window.showInformationMessage(`NPM Safety Guard (OSV): Scanned ${uris.length} file(s).`);
+        }
     }));
     context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.checkRL", async () => {
         const token = vscode.workspace.getConfiguration("npmSafetyGuard")
@@ -150,6 +193,10 @@ function scanDocument(doc, editor) {
         applyDecorations(editor, hits);
     }
     updateStatusBar(hits.length, doc.uri);
+    // Fire-and-forget OSV scan in background (free, no auth, unlimited)
+    if (vscode.workspace.getConfiguration("npmSafetyGuard").get("enableOSV", true)) {
+        void scanWithOSV(doc, editor, { silent: true });
+    }
     // Show notification for critical findings
     if (hits.length > 0) {
         const criticals = hits.filter(h => h.entry.severity === "critical");
@@ -555,5 +602,143 @@ function buildRLHoverMarkdown(hit) {
     }
     md += `[View full report on secure.software](${hit.reportUrl})`;
     return md;
+}
+// ─── OSV.dev Scanner ──────────────────────────────────────────────────────────
+async function scanWithOSV(doc, editor, opts = {}) {
+    if (!isPackageJson(doc))
+        return;
+    let parsed;
+    try {
+        parsed = JSON.parse(doc.getText());
+    }
+    catch {
+        return;
+    }
+    const allDeps = {
+        ...(parsed.dependencies || {}),
+        ...(parsed.devDependencies || {}),
+        ...(parsed.peerDependencies || {}),
+        ...(parsed.optionalDependencies || {}),
+    };
+    if (Object.keys(allDeps).length === 0)
+        return;
+    const runScan = async (report) => {
+        const total = Object.keys(allDeps).length;
+        const hits = await (0, osvChecker_1.checkAllPackagesOSV)(allDeps, (done) => {
+            report?.(done, total);
+        });
+        const osvDiagnostics = hits.map((hit) => {
+            const line = Math.max(0, findLineForPackage(doc, hit.package, hit.version));
+            const lineText = doc.lineAt(line).text;
+            const range = new vscode.Range(line, 0, line, lineText.length);
+            const severity = hit.riskLevel === "critical" || hit.riskLevel === "high"
+                ? vscode.DiagnosticSeverity.Error
+                : hit.riskLevel === "medium"
+                    ? vscode.DiagnosticSeverity.Warning
+                    : vscode.DiagnosticSeverity.Information;
+            const summary = hit.vulnerabilities
+                .slice(0, 3)
+                .map((v) => `${v.id}${v.fixedVersion ? ` (fix: ${v.fixedVersion})` : ""}: ${v.summary}`)
+                .join("\n");
+            const more = hit.vulnerabilities.length > 3 ? `\n…and ${hit.vulnerabilities.length - 3} more` : "";
+            const d = new vscode.Diagnostic(range, `[NPM Safety Guard / OSV] ${hit.package}@${hit.version}\n${summary}${more}`, severity);
+            d.source = "npm-safety-guard(OSV)";
+            const firstAdvisory = hit.vulnerabilities[0]?.advisoryUrl;
+            d.code = {
+                value: `${hit.package}@${hit.version}`,
+                target: vscode.Uri.parse(firstAdvisory ?? `https://osv.dev/list?q=${encodeURIComponent(hit.package)}`),
+            };
+            return d;
+        });
+        // Merge with existing diagnostics (don't clobber bundled-DB or RL results)
+        const existing = diagnosticCollection.get(doc.uri) ?? [];
+        const nonOsv = existing.filter((d) => d.source !== "npm-safety-guard(OSV)");
+        diagnosticCollection.set(doc.uri, [...nonOsv, ...osvDiagnostics]);
+        // Inline blue decorations (skip packages already flagged by bundled DB — red wins)
+        const activeEditor = editor ?? vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === doc.uri.toString());
+        if (activeEditor && getConfig("showInlineDecorations")) {
+            const flaggedByBundled = new Set((diagnosticCollection.get(doc.uri) ?? [])
+                .filter((d) => d.source === "npm-safety-guard")
+                .map((d) => typeof d.code === "object" ? d.code.value : undefined));
+            const decorations = hits
+                .filter((hit) => !flaggedByBundled.has(`${hit.package}@${hit.version}`))
+                .map((hit) => {
+                const line = Math.max(0, findLineForPackage(doc, hit.package, hit.version));
+                const lineText = activeEditor.document.lineAt(line).text;
+                const md = new vscode.MarkdownString(buildOSVHoverMarkdown(hit));
+                md.isTrusted = true;
+                return { range: new vscode.Range(line, 0, line, lineText.length), hoverMessage: md };
+            });
+            activeEditor.setDecorations(osvDecorationType, decorations);
+        }
+        if (!opts.silent) {
+            if (hits.length === 0) {
+                vscode.window.showInformationMessage("NPM Safety Guard (OSV): No CVEs found.");
+            }
+            else {
+                const criticals = hits.filter((h) => h.riskLevel === "critical" || h.riskLevel === "high").length;
+                vscode.window.showWarningMessage(`NPM Safety Guard (OSV): ${hits.length} vulnerable package(s) — ${criticals} critical/high`, "View Report").then((choice) => {
+                    if (choice === "View Report") {
+                        vscode.commands.executeCommand("npmSafetyGuard.showReport");
+                    }
+                });
+            }
+        }
+    };
+    if (opts.silent) {
+        await runScan();
+    }
+    else {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Window,
+            title: "NPM Safety Guard: Scanning via OSV.dev...",
+            cancellable: false,
+        }, async (progress) => {
+            const total = Object.keys(allDeps).length;
+            await runScan((done) => {
+                progress.report({
+                    message: `${done}/${total} packages`,
+                    increment: (1 / total) * 100,
+                });
+            });
+        });
+    }
+}
+function buildOSVHoverMarkdown(hit) {
+    const badge = hit.riskLevel === "critical" ? "🔴 CRITICAL"
+        : hit.riskLevel === "high" ? "🟠 HIGH"
+            : hit.riskLevel === "medium" ? "🟡 MEDIUM"
+                : "🔵 LOW";
+    let md = `### ${badge} — OSV.dev CVE Report\n\n`;
+    md += `**Package:** \`${hit.package}@${hit.version}\`\n\n`;
+    md += `**Vulnerabilities (${hit.vulnerabilities.length}):**\n`;
+    hit.vulnerabilities.slice(0, 5).forEach((v) => {
+        md += `- \`${v.id}\``;
+        if (v.aliases.length > 0)
+            md += ` (${v.aliases.slice(0, 2).join(", ")})`;
+        md += ` — ${v.summary || "See advisory"}`;
+        if (v.fixedVersion)
+            md += `\n   ✅ Fixed in \`${v.fixedVersion}\``;
+        if (v.advisoryUrl)
+            md += `\n   [Advisory](${v.advisoryUrl})`;
+        md += `\n`;
+    });
+    if (hit.vulnerabilities.length > 5) {
+        md += `\n*…and ${hit.vulnerabilities.length - 5} more*\n`;
+    }
+    md += `\n[All advisories on osv.dev](https://osv.dev/list?q=${encodeURIComponent(hit.package)}&ecosystem=npm)`;
+    return md;
+}
+// ─── Remote DB Refresh ────────────────────────────────────────────────────────
+async function refreshRemoteDb(context, force = false) {
+    const cfg = vscode.workspace.getConfiguration("npmSafetyGuard");
+    if (!force && !cfg.get("enableRemoteDb", true)) {
+        return { entries: [], source: "none" };
+    }
+    const url = cfg.get("remoteDbUrl", "") || remoteDb_1.DEFAULT_DB_URL;
+    const storageDir = context.globalStorageUri.fsPath;
+    const result = await (0, remoteDb_1.fetchRemoteEntries)(storageDir, url);
+    (0, maliciousDb_1.setRemoteEntries)(result.entries);
+    return result;
 }
 //# sourceMappingURL=extension.js.map

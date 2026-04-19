@@ -6,6 +6,8 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MALICIOUS_DB = void 0;
+exports.setRemoteEntries = setRemoteEntries;
+exports.getAllEntries = getAllEntries;
 exports.checkPackage = checkPackage;
 exports.checkDependencies = checkDependencies;
 exports.MALICIOUS_DB = [
@@ -93,21 +95,32 @@ exports.MALICIOUS_DB = [
         sources: ["https://snyk.io/blog/peacenotwar-malicious-npm-node-ipc-package-vulnerability/"]
     }
 ];
+// Remote entries fetched from the community feed. Merged with the bundled DB
+// at scan time. Updated by extension activation; safe-default empty.
+let REMOTE_ENTRIES = [];
+function setRemoteEntries(entries) {
+    REMOTE_ENTRIES = entries ?? [];
+}
+function getAllEntries() {
+    // Bundled first so its sources/messages take precedence on duplicates
+    const seen = new Set(exports.MALICIOUS_DB.map((e) => `${e.package}|${e.versions.join(",")}`));
+    const extras = REMOTE_ENTRIES.filter((e) => !seen.has(`${e.package}|${e.versions.join(",")}`));
+    return [...exports.MALICIOUS_DB, ...extras];
+}
 /**
- * Check if a specific package@version is in the malicious database.
- * Returns the matching entry or null.
+ * Check if a specific package@version is in the malicious database
+ * (bundled + remote feed). Returns the matching entry or null.
  */
 function checkPackage(name, version) {
     const cleanVersion = version.replace(/[\^~>=<]/g, "").trim();
-    for (const entry of exports.MALICIOUS_DB) {
+    for (const entry of getAllEntries()) {
         if (entry.package !== name)
             continue;
         if (entry.versions.includes("*"))
             return entry;
         if (entry.versions.includes(cleanVersion))
             return entry;
-        // Also match if the resolved version equals a bad version
-        if (entry.versions.some(v => cleanVersion.startsWith(v)))
+        if (entry.versions.some((v) => cleanVersion.startsWith(v)))
             return entry;
     }
     return null;

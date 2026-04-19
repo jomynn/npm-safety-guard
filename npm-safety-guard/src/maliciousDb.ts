@@ -112,19 +112,35 @@ export const MALICIOUS_DB: MaliciousEntry[] = [
   }
 ];
 
+// Remote entries fetched from the community feed. Merged with the bundled DB
+// at scan time. Updated by extension activation; safe-default empty.
+let REMOTE_ENTRIES: MaliciousEntry[] = [];
+
+export function setRemoteEntries(entries: MaliciousEntry[]): void {
+  REMOTE_ENTRIES = entries ?? [];
+}
+
+export function getAllEntries(): MaliciousEntry[] {
+  // Bundled first so its sources/messages take precedence on duplicates
+  const seen = new Set(MALICIOUS_DB.map((e) => `${e.package}|${e.versions.join(",")}`));
+  const extras = REMOTE_ENTRIES.filter(
+    (e) => !seen.has(`${e.package}|${e.versions.join(",")}`)
+  );
+  return [...MALICIOUS_DB, ...extras];
+}
+
 /**
- * Check if a specific package@version is in the malicious database.
- * Returns the matching entry or null.
+ * Check if a specific package@version is in the malicious database
+ * (bundled + remote feed). Returns the matching entry or null.
  */
 export function checkPackage(name: string, version: string): MaliciousEntry | null {
   const cleanVersion = version.replace(/[\^~>=<]/g, "").trim();
 
-  for (const entry of MALICIOUS_DB) {
+  for (const entry of getAllEntries()) {
     if (entry.package !== name) continue;
     if (entry.versions.includes("*")) return entry;
     if (entry.versions.includes(cleanVersion)) return entry;
-    // Also match if the resolved version equals a bad version
-    if (entry.versions.some(v => cleanVersion.startsWith(v))) return entry;
+    if (entry.versions.some((v) => cleanVersion.startsWith(v))) return entry;
   }
   return null;
 }

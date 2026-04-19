@@ -1,0 +1,121 @@
+[
+  {
+    "package": "axios",
+    "versions": ["1.14.1", "0.30.4"],
+    "severity": "critical",
+    "title": "Axios Supply Chain — RAT via plain-crypto-js",
+    "description": "Maintainer account compromised (Sapphire Sleet / North Korea). These versions inject plain-crypto-js@4.2.1 which runs a postinstall script that deploys a cross-platform Remote Access Trojan (RAT) on macOS, Windows, and Linux. Malware phones home to sfrclak.com:8000 and self-deletes to evade forensics. Rotate ALL credentials if installed.",
+    "safeVersion": "1.14.0",
+    "reportedAt": "2026-03-31",
+    "sources": [
+      "https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan",
+      "https://cloud.google.com/blog/topics/threat-intelligence/north-korea-threat-actor-targets-axios-npm-package",
+      "https://www.microsoft.com/en-us/security/blog/2026/04/01/mitigating-the-axios-npm-supply-chain-compromise"
+    ]
+  },
+  {
+    "package": "plain-crypto-js",
+    "versions": ["4.2.1"],
+    "severity": "critical",
+    "title": "plain-crypto-js — Malicious RAT Dropper",
+    "description": "Not a legitimate package. Created by Sapphire Sleet as a delivery vehicle for the Axios supply chain attack. Contains postinstall hook that deploys WAVESHAPER.V2 backdoor. Never a dependency of real Axios. If found in node_modules, assume the host is fully compromised.",
+    "reportedAt": "2026-03-31",
+    "sources": [
+      "https://snyk.io/blog/axios-npm-package-compromised-supply-chain-attack-delivers-cross-platform/"
+    ]
+  },
+  {
+    "package": "@shadanai/openclaw",
+    "versions": ["2026.3.28-2", "2026.3.28-3", "2026.3.31-1", "2026.3.31-2"],
+    "severity": "critical",
+    "title": "@shadanai/openclaw — Vendors plain-crypto-js payload",
+    "description": "Found to vendor the malicious plain-crypto-js payload directly. Part of the same Axios supply chain attack campaign.",
+    "reportedAt": "2026-03-31",
+    "sources": [
+      "https://thehackernews.com/2026/03/axios-supply-chain-attack-pushes-cross.html"
+    ]
+  },
+  {
+    "package": "@qqbrowser/openclaw-qbot",
+    "versions": ["0.0.130"],
+    "severity": "critical",
+    "title": "@qqbrowser/openclaw-qbot — Ships tampered axios@1.14.1",
+    "description": "Bundles a tampered axios@1.14.1 with plain-crypto-js injected as a dependency in its node_modules folder. Same RAT campaign.",
+    "reportedAt": "2026-03-31",
+    "sources": [
+      "https://thehackernews.com/2026/03/axios-supply-chain-attack-pushes-cross.html"
+    ]
+  },
+  {
+    "package": "@ctrl/tinycolor",
+    "versions": ["4.1.1", "4.1.2"],
+    "severity": "critical",
+    "title": "Shai-Hulud — Self-replicating npm worm (Sept 2025)",
+    "description": "Patient-zero of the Shai-Hulud worm. Steals GitHub/npm/cloud credentials at install time, then uses victim's npm token to publish malicious versions of OTHER packages they own — propagating automatically. ~180+ packages compromised, ~$50M in crypto stolen. Rotate ALL credentials on any host that installed this version.",
+    "reportedAt": "2025-09-15",
+    "sources": [
+      "https://unit42.paloaltonetworks.com/npm-supply-chain-attack/",
+      "https://www.cisa.gov/news-events/alerts/2025/09/23/widespread-supply-chain-compromise-impacting-npm-ecosystem"
+    ]
+  },
+  {
+    "package": "rxnt-authentication",
+    "versions": ["*"],
+    "severity": "critical",
+    "title": "Shai-Hulud worm — Compromised propagation target",
+    "description": "Compromised by the Shai-Hulud worm via stolen maintainer credentials. Treat any installed version as fully compromised.",
+    "reportedAt": "2025-09-16",
+    "sources": [
+      "https://unit42.paloaltonetworks.com/npm-supply-chain-attack/"
+    ]
+  },
+  {
+    "package": "ngx-toastr",
+    "versions": ["19.0.1", "19.0.2"],
+    "severity": "critical",
+    "title": "Shai-Hulud 2.0 — preinstall payload (Nov 2025)",
+    "description": "Compromised in the November 2025 Shai-Hulud 2.0 wave that hit Zapier, ENS, AsyncAPI, PostHog, Browserbase and Postman packages. Payload moved from postinstall to preinstall to bypass scanners. Created 25k+ malicious GitHub repos across ~350 victim accounts.",
+    "reportedAt": "2025-11-24",
+    "sources": [
+      "https://www.microsoft.com/en-us/security/blog/2025/12/09/shai-hulud-2-0-guidance-for-detecting-investigating-and-defending-against-the-supply-chain-attack/",
+      "https://blog.checkpoint.com/research/shai-hulud-2-0-inside-the-second-coming-the-most-aggressive-npm-supply-chain-attack-of-2025/",
+      "https://www.aikido.dev/blog/shai-hulud-strikes-again-hitting-zapier-ensdomains"
+    ]
+  },
+  {
+    "package": "bigmathutils",
+    "versions": ["*"],
+    "severity": "critical",
+    "title": "Lazarus / DPRK — Marstech Mayhem credential stealer",
+    "description": "Published by fake recruiters on LinkedIn targeting developers. Steals Discord tokens, browser cookies/passwords, and crypto wallet seed phrases on Win/macOS/Linux. ~10k downloads before discovery. Part of an ongoing North Korean campaign.",
+    "reportedAt": "2026-02-10",
+    "sources": [
+      "https://thehackernews.com/2026/02/lazarus-campaign-plants-malicious.html",
+      "https://www.veracode.com/blog/resurgent-north-korean-malware-campaign-in-npm/"
+    ]
+  },
+  {
+    "package": "event-stream",
+    "versions": ["3.3.6"],
+    "severity": "high",
+    "title": "event-stream — Crypto wallet theft (2018)",
+    "description": "Malicious maintainer added flatmap-stream dependency targeting Copay Bitcoin wallets. Historic supply chain attack.",
+    "safeVersion": "3.3.5",
+    "reportedAt": "2018-11-26",
+    "sources": [
+      "https://github.com/dominictarr/event-stream/issues/116"
+    ]
+  },
+  {
+    "package": "node-ipc",
+    "versions": ["10.1.1", "10.1.2", "11.0.0"],
+    "severity": "high",
+    "title": "node-ipc — Protestware targeting Russian/Belarusian IPs (2022)",
+    "description": "Maintainer intentionally introduced code that wiped files on systems with Russian or Belarusian IP addresses.",
+    "safeVersion": "9.2.2",
+    "reportedAt": "2022-03-15",
+    "sources": [
+      "https://snyk.io/blog/peacenotwar-malicious-npm-node-ipc-package-vulnerability/"
+    ]
+  }
+]

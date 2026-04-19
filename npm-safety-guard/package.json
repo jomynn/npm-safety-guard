@@ -1,8 +1,8 @@
 {
   "name": "npm-safety-guard",
   "displayName": "NPM Safety Guard",
-  "description": "Detects malicious npm packages & CVE vulnerabilities before installation. Covers supply chain attacks (Axios 1.14.1 / DPRK RAT), GlassWorm, event-stream and more. By SendWaveHub.",
-  "version": "1.0.0",
+  "description": "Detects malicious npm packages & CVE vulnerabilities before installation. Live OSV.dev coverage + supply chain attack DB (Shai-Hulud, Axios/DPRK RAT, event-stream, and more). By SendWaveHub.",
+  "version": "1.2.0",
   "publisher": "Sendwavehubtech",
   "author": {
     "name": "SendWaveHub",
@@ -46,6 +46,14 @@
       {
         "command": "npmSafetyGuard.checkRL",
         "title": "NPM Safety Guard: Check ReversingLabs (CVE + Malware)"
+      },
+      {
+        "command": "npmSafetyGuard.scanOSV",
+        "title": "NPM Safety Guard: Scan with OSV.dev (CVEs)"
+      },
+      {
+        "command": "npmSafetyGuard.refreshDb",
+        "title": "NPM Safety Guard: Refresh Malware Database"
       }
     ],
     "configuration": {
@@ -60,6 +68,21 @@
           "type": "boolean",
           "default": true,
           "description": "Show inline warning decorations in package.json"
+        },
+        "npmSafetyGuard.enableOSV": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically query OSV.dev for CVEs alongside the built-in malware DB. Free, no API key required."
+        },
+        "npmSafetyGuard.enableRemoteDb": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pull the community malicious-package feed at activation (cached 24h). New attacks light up without an extension update."
+        },
+        "npmSafetyGuard.remoteDbUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Custom URL for the malicious-package feed (JSON array of MaliciousEntry). Leave blank for the official feed."
         },
         "npmSafetyGuard.rlToken": {
           "type": "string",
