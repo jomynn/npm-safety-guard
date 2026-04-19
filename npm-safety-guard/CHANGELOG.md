@@ -2,6 +2,16 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.8.2] — 2026-04-19
+
+### Fixed
+- **Status bar shield now reflects the full workspace.** Previously it only showed bundled-malware hits from the *last-scanned file* — so a workspace with 70 real findings (32 CVEs + 38 install hooks) could still display "NPM Safe" because the last file had no known-malicious entries. The shield now aggregates every NPM Safety Guard diagnostic across every open file and shows a compact breakdown:
+  - `🛡 NPM Safe` when truly nothing flagged
+  - `⚠ 3 THREATS +12 more` when malware or homoglyphs are present (red background)
+  - `⚠ 32 CVEs · 38 hooks` when only CVEs / scripts flagged (yellow background)
+  - Hover reveals a full per-layer breakdown (🔴 Malware / 🔵 CVE / 🟣 Typosquat / 🟡 Install hook / 🟠 RL) and the affected-file count.
+- Every async layer (OSV, install-scripts, typosquat, RL) now triggers a status-bar refresh after writing diagnostics, so the shield stays accurate as scans complete in the background.
+
 ## [1.8.1] — 2026-04-19
 
 ### Changed

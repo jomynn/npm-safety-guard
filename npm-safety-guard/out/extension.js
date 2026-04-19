@@ -416,6 +416,7 @@ function applyTyposquatDiagnostics(doc, editor, deps) {
     const existing = diagnosticCollection.get(doc.uri) ?? [];
     const nonTypo = existing.filter((d) => d.source !== "npm-safety-guard(typosquat)");
     diagnosticCollection.set(doc.uri, [...nonTypo, ...diagnostics]);
+    updateStatusBar();
     // Inline purple decorations — skip packages already flagged as malicious (red wins)
     const activeEditor = editor ?? vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === doc.uri.toString());
     if (activeEditor && getConfig("showInlineDecorations")) {
@@ -481,18 +482,65 @@ function buildHoverMarkdown(hit) {
     return md;
 }
 // ─── Status Bar ───────────────────────────────────────────────────────────────
-function updateStatusBar(hitCount, _uri) {
-    if (hitCount === 0) {
+function updateStatusBar(_hitCount, _uri) {
+    // Aggregate every diagnostic from every NPM Safety Guard layer across the
+    // whole workspace — not just the current file — so the shield reflects the
+    // full security posture, not whatever happened in the last-scanned file.
+    let malware = 0, cve = 0, scripts = 0, typosquat = 0, rl = 0;
+    let files = 0;
+    diagnosticCollection.forEach((_uri, diags) => {
+        if (diags.length > 0)
+            files++;
+        for (const d of diags) {
+            switch (d.source) {
+                case "npm-safety-guard":
+                    malware++;
+                    break;
+                case "npm-safety-guard(OSV)":
+                    cve++;
+                    break;
+                case "npm-safety-guard(scripts)":
+                    scripts++;
+                    break;
+                case "npm-safety-guard(typosquat)":
+                    typosquat++;
+                    break;
+                case "npm-safety-guard(RL)":
+                    rl++;
+                    break;
+            }
+        }
+    });
+    const total = malware + cve + scripts + typosquat + rl;
+    if (total === 0) {
         statusBarItem.text = "$(shield) NPM Safe";
         statusBarItem.backgroundColor = undefined;
     }
-    else {
-        statusBarItem.text = `$(warning) ${hitCount} THREAT${hitCount > 1 ? "S" : ""} FOUND`;
+    else if (malware > 0 || typosquat > 0) {
+        // Red background — malware / homoglyphs are unambiguous attacks
+        statusBarItem.text = `$(warning) ${malware + typosquat} THREAT${malware + typosquat > 1 ? "S" : ""}${cve || scripts ? ` +${cve + scripts} more` : ""}`;
         statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
     }
+    else {
+        // Yellow background — CVEs / script warnings — no confirmed malware
+        const parts = [];
+        if (cve > 0)
+            parts.push(`${cve} CVE${cve > 1 ? "s" : ""}`);
+        if (scripts > 0)
+            parts.push(`${scripts} hook${scripts > 1 ? "s" : ""}`);
+        if (rl > 0)
+            parts.push(`${rl} RL`);
+        statusBarItem.text = `$(alert) ${parts.join(" · ")}`;
+        statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+    }
     statusBarItem.tooltip =
-        `NPM Safety Guard by sendwavehub.tech\n` +
-            `${hitCount === 0 ? "No threats detected" : `${hitCount} threat(s) found!`}`;
+        `NPM Safety Guard — findings across ${files} file(s)\n\n` +
+            `🔴 Malware:      ${malware}\n` +
+            `🔵 CVE (OSV):    ${cve}\n` +
+            `🟣 Typosquat:    ${typosquat}\n` +
+            `🟡 Install hook: ${scripts}\n` +
+            `🟠 RL premium:   ${rl}\n\n` +
+            `Click for Security Report.`;
     statusBarItem.show();
 }
 // ─── Webview Report ───────────────────────────────────────────────────────────
@@ -868,6 +916,7 @@ async function scanWithRL(doc, editor, cveDecorationType, token) {
         // Merge with existing static diagnostics
         const existing = diagnosticCollection.get(doc.uri) ?? [];
         diagnosticCollection.set(doc.uri, [...existing, ...rlDiagnostics]);
+        updateStatusBar();
         // Apply amber inline decorations for CVE hits
         if (editor) {
             const decorations = rlHits.map((hit) => {
@@ -971,6 +1020,7 @@ async function scanWithOSV(doc, editor, opts = {}) {
         const existing = diagnosticCollection.get(doc.uri) ?? [];
         const nonOsv = existing.filter((d) => d.source !== "npm-safety-guard(OSV)");
         diagnosticCollection.set(doc.uri, [...nonOsv, ...osvDiagnostics]);
+        updateStatusBar();
         // Inline blue decorations (skip packages already flagged by bundled DB — red wins)
         const activeEditor = editor ?? vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === doc.uri.toString());
         if (activeEditor && getConfig("showInlineDecorations")) {
@@ -1101,6 +1151,7 @@ async function scanInstallScripts(doc, editor, opts = {}) {
     const existing = diagnosticCollection.get(doc.uri) ?? [];
     const nonScript = existing.filter((d) => d.source !== "npm-safety-guard(scripts)");
     diagnosticCollection.set(doc.uri, [...nonScript, ...scriptDiagnostics]);
+    updateStatusBar();
     // Inline gold decorations — but skip packages already flagged red (malicious wins)
     const activeEditor = editor ?? vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === doc.uri.toString());
     if (activeEditor && getConfig("showInlineDecorations")) {
