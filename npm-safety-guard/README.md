@@ -27,6 +27,7 @@ The npm ecosystem ships ~1 supply chain attack per week ([Shai-Hulud worm](https
 | 📋 **Lockfile walk** | command | 0 | Transitive compromises (catches `flatmap-stream@0.1.1` shipped via `event-stream@3.3.6`) |
 | 📊 **Risk heuristics** | command | 2 HTTP/dep | 0–100 score from package age, maintainer takeover, deprecation, download velocity |
 | 🟠 **ReversingLabs deep scan** | command (opt-in) | needs token | Binary tampering analysis ([free token](https://secure.software)) |
+| 💡 **Quick-fix code actions** | lightbulb / `Cmd+.` | instant | One-click *Pin to fix version* · *Replace typo* · *Remove dependency* · *Add to whitelist* |
 
 ## Real attacks covered out of the box
 

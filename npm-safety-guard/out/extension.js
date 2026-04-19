@@ -12,6 +12,7 @@ const deepScanner_1 = require("./deepScanner");
 const lockfileScanner_1 = require("./lockfileScanner");
 const registryHeuristics_1 = require("./registryHeuristics");
 const typosquatChecker_1 = require("./typosquatChecker");
+const codeActions_1 = require("./codeActions");
 // ─── Globals ──────────────────────────────────────────────────────────────────
 let diagnosticCollection;
 let statusBarItem;
@@ -24,6 +25,31 @@ function activate(context) {
     console.log("NPM Safety Guard is active");
     // Pull the remote malicious-package feed in the background — non-blocking.
     void refreshRemoteDb(context);
+    // Register quick-fix code actions on package.json
+    context.subscriptions.push(vscode.languages.registerCodeActionsProvider({ language: "json", pattern: "**/package.json", scheme: "file" }, new codeActions_1.NpmSafetyGuardCodeActionProvider(), { providedCodeActionKinds: codeActions_1.NpmSafetyGuardCodeActionProvider.providedCodeActionKinds }));
+    // Command invoked by the "Add to whitelist" quick-fix
+    context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.addToScriptWhitelist", async (name) => {
+        if (!name)
+            return;
+        const cfg = vscode.workspace.getConfiguration("npmSafetyGuard");
+        const current = cfg.get("scriptWhitelist", []);
+        if (current.includes(name)) {
+            vscode.window.showInformationMessage(`"${name}" is already in the whitelist.`);
+            return;
+        }
+        const next = [...current, name].sort();
+        // Prefer workspace scope so the allowlist travels with the repo
+        const target = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
+            ? vscode.ConfigurationTarget.Workspace
+            : vscode.ConfigurationTarget.Global;
+        await cfg.update("scriptWhitelist", next, target);
+        vscode.window.showInformationMessage(`Added "${name}" to NPM Safety Guard script whitelist (${target === vscode.ConfigurationTarget.Workspace ? "workspace" : "user"}).`);
+        // Re-scan the active doc so the warning drops immediately
+        const editor = vscode.window.activeTextEditor;
+        if (editor && isPackageJson(editor.document)) {
+            void scanInstallScripts(editor.document, editor, { silent: true });
+        }
+    }));
     // Diagnostic collection (Problems panel)
     diagnosticCollection = vscode.languages.createDiagnosticCollection("npm-safety-guard");
     context.subscriptions.push(diagnosticCollection);

@@ -2,6 +2,22 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.8.1] — 2026-04-19
+
+### Changed
+- README now lists the quick-fix code actions row in the detection-layer table so the Marketplace listing reflects v1.8 capabilities.
+
+## [1.8.0] — 2026-04-19
+
+### Added
+- **Quick-fix code actions** on every flagged dependency. Click the lightbulb (or `Cmd+.` / `Ctrl+.`) on a red / blue / purple / gold line to get one-click fixes:
+  - 🔴 **Malware:** `Pin to safe version X.Y.Z` + `Remove ... from dependencies`
+  - 🔵 **CVE:** `Upgrade to CVE fix version X.Y.Z` — picks the **highest** fix version across all listed CVEs so one bump covers every advisory in the diagnostic
+  - 🟣 **Typosquat / homoglyph:** `Replace "<typo>" with "<correct name>"` — in-place name edit, version preserved
+  - 🟡 **Install script:** `Add "<name>" to install-script whitelist` — writes to workspace `settings.json` (or user settings if no workspace) and immediately re-scans so the warning drops
+- **Caret range on pin actions** (`^X.Y.Z`) so future patch/minor releases still update with `npm install`, but any fixed version unlocks at the right floor.
+- All actions include `isPreferred: true` where unambiguous so they rank first in the lightbulb menu.
+
 ## [1.7.3] — 2026-04-19
 
 ### Fixed
