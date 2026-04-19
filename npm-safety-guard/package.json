@@ -2,7 +2,7 @@
   "name": "npm-safety-guard",
   "displayName": "NPM Safety Guard",
   "description": "Detects malicious npm packages & CVE vulnerabilities before installation. Live OSV.dev coverage + supply chain attack DB (Shai-Hulud, Axios/DPRK RAT, event-stream, and more). By SendWaveHub.",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "publisher": "Sendwavehubtech",
   "author": {
     "name": "SendWaveHub",
