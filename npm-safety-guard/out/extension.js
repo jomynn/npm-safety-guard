@@ -8,6 +8,7 @@ const rlChecker_1 = require("./rlChecker");
 const osvChecker_1 = require("./osvChecker");
 const remoteDb_1 = require("./remoteDb");
 const installScriptChecker_1 = require("./installScriptChecker");
+const deepScanner_1 = require("./deepScanner");
 // ─── Globals ──────────────────────────────────────────────────────────────────
 let diagnosticCollection;
 let statusBarItem;
@@ -105,6 +106,24 @@ function activate(context) {
         }
     }), vscode.commands.registerCommand("npmSafetyGuard.showReport", () => {
         showWebviewReport(context);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.deepScan", async () => {
+        (0, deepScanner_1.clearDeepScanCache)();
+        const editor = vscode.window.activeTextEditor;
+        let doc;
+        if (editor && isPackageJson(editor.document)) {
+            doc = editor.document;
+        }
+        else {
+            const uris = await vscode.workspace.findFiles("**/package.json", "**/node_modules/**", 1);
+            if (uris.length > 0)
+                doc = await vscode.workspace.openTextDocument(uris[0]);
+        }
+        if (!doc) {
+            vscode.window.showInformationMessage("NPM Safety Guard: No package.json found.");
+            return;
+        }
+        await runDeepScan(doc, context);
     }));
     context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.scanInstallScripts", async () => {
         (0, installScriptChecker_1.clearScriptCache)();
@@ -848,6 +867,230 @@ async function scanInstallScripts(doc, editor, opts = {}) {
             });
         }
     }
+}
+// ─── Deep Scanner ─────────────────────────────────────────────────────────────
+let deepScanPanel;
+async function runDeepScan(doc, _context) {
+    let parsed;
+    try {
+        parsed = JSON.parse(doc.getText());
+    }
+    catch {
+        vscode.window.showErrorMessage("NPM Safety Guard: Cannot parse package.json.");
+        return;
+    }
+    const allDeps = {
+        ...(parsed.dependencies || {}),
+        ...(parsed.devDependencies || {}),
+        ...(parsed.peerDependencies || {}),
+        ...(parsed.optionalDependencies || {}),
+    };
+    const totalDeps = Object.keys(allDeps).length;
+    if (totalDeps === 0) {
+        vscode.window.showInformationMessage("NPM Safety Guard: No dependencies to deep-scan.");
+        return;
+    }
+    // Cap at 50 deps to keep scan time bounded
+    const capped = {};
+    Object.entries(allDeps).slice(0, 50).forEach(([k, v]) => { capped[k] = v; });
+    const cappedNote = totalDeps > 50 ? ` (capped from ${totalDeps})` : "";
+    const results = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `NPM Safety Guard: Deep-scanning ${Object.keys(capped).length} packages${cappedNote}…`,
+        cancellable: false,
+    }, async (progress) => {
+        return (0, deepScanner_1.deepScanAll)(capped, (done, total, currentPkg) => {
+            progress.report({
+                message: `${done}/${total} — ${currentPkg}`,
+                increment: (1 / total) * 100,
+            });
+        });
+    });
+    showDeepScanReport(doc.fileName, results, totalDeps);
+}
+function showDeepScanReport(filePath, results, totalDeps) {
+    if (deepScanPanel) {
+        deepScanPanel.reveal(vscode.ViewColumn.One);
+    }
+    else {
+        deepScanPanel = vscode.window.createWebviewPanel("npmSafetyGuardDeepScan", "NPM Safety Guard — Deep Scan", vscode.ViewColumn.One, { enableScripts: false });
+        deepScanPanel.onDidDispose(() => { deepScanPanel = undefined; });
+    }
+    deepScanPanel.webview.html = buildDeepScanHtml(filePath, results, totalDeps);
+}
+function buildDeepScanHtml(filePath, results, totalDeps) {
+    const flagged = results.length;
+    const totalFindings = results.reduce((a, r) => a + r.findings.length, 0);
+    const criticals = results.flatMap((r) => r.findings).filter((f) => f.severity === "critical").length;
+    const now = new Date().toLocaleString();
+    const SEV_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
+    results.sort((a, b) => SEV_RANK[b.topSeverity === "none" ? "low" : b.topSeverity]
+        - SEV_RANK[a.topSeverity === "none" ? "low" : a.topSeverity]);
+    const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const cardsHtml = results.length === 0
+        ? `<div class="clean"><span class="icon">✅</span><h2>No suspicious patterns detected</h2><p>Deep scan checked ${totalDeps} package(s) and found no obfuscation, eval, payload-blob, exfil, or self-publish signatures.</p></div>`
+        : results.map((r) => {
+            const findingsBySeverity = [...r.findings].sort((a, b) => SEV_RANK[b.severity] - SEV_RANK[a.severity]);
+            const findingsHtml = findingsBySeverity.map((f) => `
+          <div class="finding ${f.severity}">
+            <div class="finding-header">
+              <span class="badge ${f.severity}">${f.severity.toUpperCase()}</span>
+              <span class="ftype">${escape(f.type.replace(/_/g, " "))}</span>
+              <span class="floc">${escape(f.file)}${f.line ? `:${f.line}` : ""}</span>
+            </div>
+            <div class="fdesc">${escape(f.description)}</div>
+            <pre class="fsnippet">${escape(f.snippet)}</pre>
+          </div>
+        `).join("");
+            const sevClass = r.topSeverity === "none" ? "low" : r.topSeverity;
+            return `
+          <div class="pkg-block ${sevClass}">
+            <div class="pkg-header">
+              <div>
+                <span class="pkg-badge ${sevClass}">${(r.topSeverity === "none" ? "LOW" : r.topSeverity).toUpperCase()}</span>
+                <strong>${escape(r.package)}</strong> <code>@${escape(r.version)}</code>
+                ${r.scriptsPresent ? '<span class="chip">install hooks</span>' : ""}
+              </div>
+              <div class="meta">${r.findings.length} finding(s) · ${r.filesScanned}/${r.totalFiles} files scanned</div>
+            </div>
+            ${findingsHtml}
+            <div class="pkg-footer">
+              <a href="https://www.npmjs.com/package/${escape(r.package)}/v/${escape(r.version)}">view on npm</a>
+              ${r.error ? `<span class="error">⚠ ${escape(r.error)}</span>` : ""}
+            </div>
+          </div>
+        `;
+        }).join("");
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>NPM Safety Guard — Deep Scan</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0d1117; color: #c9d1d9;
+    padding: 24px; line-height: 1.6;
+  }
+  h1 { font-size: 1.4rem; color: #f0f6fc; margin-bottom: 4px; }
+  .meta { color: #8b949e; font-size: 0.85rem; margin-bottom: 24px; }
+  .summary { display: flex; gap: 12px; margin-bottom: 28px; flex-wrap: wrap; }
+  .stat {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 14px 20px; min-width: 140px; text-align: center;
+  }
+  .stat .num { font-size: 2rem; font-weight: 800; }
+  .stat .lbl { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat.danger .num { color: #f85149; }
+  .stat.warn .num { color: #d29922; }
+  .stat.ok .num { color: #3fb950; }
+  .pkg-block {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  .pkg-block.critical { border-left: 4px solid #f85149; background: #1c0f0f; }
+  .pkg-block.high     { border-left: 4px solid #d29922; background: #1c1600; }
+  .pkg-block.medium   { border-left: 4px solid #388bfd; background: #0d1e40; }
+  .pkg-block.low      { border-left: 4px solid #3fb950; }
+  .pkg-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 8px; }
+  .pkg-header strong { font-size: 1.05rem; color: #f0f6fc; margin-left: 6px; }
+  .pkg-header code { background: #0d1117; padding: 2px 6px; border-radius: 3px; font-size: 0.85rem; }
+  .pkg-header .meta { color: #8b949e; font-size: 0.78rem; margin: 0; }
+  .pkg-badge {
+    font-size: 0.7rem; font-weight: 800; padding: 3px 9px;
+    border-radius: 99px; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .pkg-badge.critical { background: #f85149; color: #fff; }
+  .pkg-badge.high     { background: #d29922; color: #000; }
+  .pkg-badge.medium   { background: #388bfd; color: #fff; }
+  .pkg-badge.low      { background: #3fb950; color: #000; }
+  .chip {
+    display: inline-block; margin-left: 8px;
+    background: #21262d; color: #d29922;
+    padding: 2px 8px; border-radius: 99px; font-size: 0.7rem;
+  }
+  .finding {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+    padding: 10px 12px; margin-bottom: 8px;
+  }
+  .finding.critical { border-left: 3px solid #f85149; }
+  .finding.high     { border-left: 3px solid #d29922; }
+  .finding.medium   { border-left: 3px solid #388bfd; }
+  .finding.low      { border-left: 3px solid #3fb950; }
+  .finding-header { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+  .badge {
+    font-size: 0.65rem; font-weight: 700; padding: 2px 7px;
+    border-radius: 99px; text-transform: uppercase;
+  }
+  .badge.critical { background: #f85149; color: #fff; }
+  .badge.high     { background: #d29922; color: #000; }
+  .badge.medium   { background: #388bfd; color: #fff; }
+  .badge.low      { background: #3fb950; color: #000; }
+  .ftype { color: #f0f6fc; font-weight: 600; font-size: 0.85rem; }
+  .floc  { color: #8b949e; font-size: 0.78rem; font-family: monospace; }
+  .fdesc { color: #c9d1d9; font-size: 0.85rem; margin-bottom: 6px; }
+  .fsnippet {
+    background: #010409; padding: 6px 10px; border-radius: 4px;
+    font-family: 'Cascadia Code', monospace; font-size: 0.78rem;
+    color: #ff7b72; overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+  }
+  .pkg-footer {
+    margin-top: 10px; padding-top: 8px;
+    border-top: 1px solid #21262d;
+    font-size: 0.78rem; color: #8b949e;
+    display: flex; justify-content: space-between;
+  }
+  .pkg-footer a { color: #388bfd; text-decoration: none; }
+  .pkg-footer .error { color: #f85149; }
+  .clean {
+    text-align: center; padding: 60px 20px;
+    border: 1px dashed #30363d; border-radius: 12px; color: #3fb950;
+  }
+  .clean .icon { font-size: 3rem; display: block; margin-bottom: 12px; }
+  .clean h2 { font-size: 1.4rem; margin-bottom: 8px; }
+  .clean p { color: #8b949e; }
+  .footer {
+    margin-top: 32px; padding-top: 16px;
+    border-top: 1px solid #30363d;
+    font-size: 12px; color: #8b949e; text-align: center;
+  }
+  .footer a { color: #388bfd; text-decoration: none; }
+</style>
+</head>
+<body>
+  <h1>🔬 Deep Scan Report</h1>
+  <p class="meta">${escape(filePath)} · ${now}</p>
+
+  <div class="summary">
+    <div class="stat ${flagged === 0 ? 'ok' : 'warn'}">
+      <div class="num">${flagged}</div>
+      <div class="lbl">Flagged Packages</div>
+    </div>
+    <div class="stat ${totalFindings === 0 ? 'ok' : 'warn'}">
+      <div class="num">${totalFindings}</div>
+      <div class="lbl">Total Findings</div>
+    </div>
+    <div class="stat ${criticals === 0 ? 'ok' : 'danger'}">
+      <div class="num">${criticals}</div>
+      <div class="lbl">Critical</div>
+    </div>
+    <div class="stat ok">
+      <div class="num">${totalDeps}</div>
+      <div class="lbl">Deps Analyzed</div>
+    </div>
+  </div>
+
+  ${cardsHtml}
+
+  <div class="footer">
+    Deep scanner inspects each package's published tarball for eval, base64 payloads,
+    String.fromCharCode reconstruction, install-time exfil, and self-publish signatures.
+    <br>Built by <a href="https://sendwavehub.tech">SendWaveHub</a>
+  </div>
+</body>
+</html>`;
 }
 function buildScriptHoverMarkdown(hit) {
     let md = `### ⚠️ Install Script Detected\n\n`;

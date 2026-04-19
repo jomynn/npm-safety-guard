@@ -2,6 +2,20 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.4.0] — 2026-04-19
+
+### Added
+- **Deep scanner** — new command `NPM Safety Guard: Deep Scan All Dependencies (tarball AST)` fetches each package's published tarball from registry.npmjs.org, gunzips, parses tar, and runs 14 regex-based detectors against every JS/TS file inside.
+- **Detectors:** `eval`, `new Function`, `vm.runInContext`, dynamic `require(variable)`, `child_process`, `String.fromCharCode` reconstruction, large base64 blobs (>500 chars), array-of-strings `.join('')` patterns (split-file payload signature), filesystem writes to credential paths (`.ssh`, `.aws`, `.bashrc`, `.npmrc`), network exfil endpoints (Discord webhooks, Telegram bot API, Slack hooks, IP lookup services), Shai-Hulud-style `npm publish` shell-out, `curl`/`wget`/`powershell` runtime payload download, `_0x`-prefixed obfuscated identifiers, and zero-width/RTL Unicode in source.
+- **Dedicated webview report** with per-package severity cards, finding snippets, file:line locations, and npm links.
+- Scan capped at 50 dependencies per run (4-way concurrent, 10s timeout per tarball). Process-lifetime cache.
+- **Zero new runtime dependencies** — pure built-in (`https` + `zlib`). Custom tar parser supports USTAR, GNU long-name, and PAX extended headers.
+
+### Why this matters
+- Catches the split-file payload assembly attack (code split across multiple files and merged+eval'd at runtime) that signature-based scanners miss.
+- Catches Shai-Hulud's self-propagation signature before install.
+- Catches `eval(Buffer.from(base64Blob).toString())` patterns regardless of which CVE database knows about them.
+
 ## [1.3.0] — 2026-04-19
 
 ### Added
