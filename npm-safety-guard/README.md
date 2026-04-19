@@ -7,6 +7,7 @@ Detects malicious npm packages and CVE vulnerabilities in your `package.json` **
 ## Features
 
 - 🔴 **Live malware DB** — bundled list of known supply chain attacks (Shai-Hulud, Axios/DPRK RAT, Lazarus/Marstech, event-stream, node-ipc, more), auto-refreshed daily from a community feed on GitHub
+- 🟡 **Install-script auditor** — flags every dependency that ships `preinstall` / `install` / `postinstall` / `prepare` hooks (the #1 attack vector). Curated whitelist for legit packages
 - 🔵 **OSV.dev CVE scanning** — every save queries Google's OSV.dev for every known CVE in the npm ecosystem. Free, no API key required
 - 🟠 **ReversingLabs deep scan** — optional premium CVE + malware analysis (free token at [secure.software](https://secure.software))
 - 📋 **Security Report** webview with fix instructions and copy-ready `npm install` commands
@@ -21,6 +22,7 @@ Detects malicious npm packages and CVE vulnerabilities in your `package.json` **
 | Bundled malware DB | ✅ on | Known supply-chain attacks (curated) | No |
 | Remote malware feed | ✅ on | Community feed, refreshed every 24h | Yes (fail-open) |
 | OSV.dev CVE scan | ✅ on | Every known CVE across npm ecosystem | Yes (fail-open) |
+| Install-script audit | ✅ on | Packages with preinstall/postinstall hooks | Yes (fail-open) |
 | ReversingLabs deep scan | Opt-in | Binary analysis, tampering detection | Yes (token required) |
 
 ## Covered attacks (bundled + remote)
@@ -49,6 +51,7 @@ Open the command palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 - **NPM Safety Guard: Scan with OSV.dev (CVEs)** — force-refresh OSV results
 - **NPM Safety Guard: Check ReversingLabs (CVE + Malware)** — premium scan (needs token)
 - **NPM Safety Guard: Refresh Malware Database** — pull the latest remote feed now
+- **NPM Safety Guard: Audit Install Scripts (preinstall/postinstall)** — re-fetch and flag dependency install hooks
 
 Or click the 🛡 shield in the status bar to open the security report.
 
@@ -61,6 +64,8 @@ Or click the 🛡 shield in the status bar to open the security report.
 | `npmSafetyGuard.enableOSV` | `true` | Query OSV.dev for CVEs (free, auto) |
 | `npmSafetyGuard.enableRemoteDb` | `true` | Pull community malware feed every 24h |
 | `npmSafetyGuard.remoteDbUrl` | *blank* | Override the malware feed URL |
+| `npmSafetyGuard.enableScriptCheck` | `true` | Audit dependencies for install-time hooks |
+| `npmSafetyGuard.scriptWhitelist` | `[]` | Extra package names to silence from script warnings |
 | `npmSafetyGuard.rlToken` | *blank* | ReversingLabs Spectra Assure token ([get one free](https://secure.software)) |
 
 ## Privacy

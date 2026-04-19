@@ -3,6 +3,7 @@ import { checkDependencies, MaliciousEntry, setRemoteEntries } from "./malicious
 import { checkAllPackagesRL, clearRLCache, RLResult } from "./rlChecker";
 import { checkAllPackagesOSV, clearOSVCache, OSVResult } from "./osvChecker";
 import { fetchRemoteEntries, DEFAULT_DB_URL } from "./remoteDb";
+import { checkAllInstallScripts, clearScriptCache, ScriptCheckResult } from "./installScriptChecker";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,7 @@ let diagnosticCollection: vscode.DiagnosticCollection;
 let statusBarItem: vscode.StatusBarItem;
 let decorationType: vscode.TextEditorDecorationType;
 let osvDecorationType: vscode.TextEditorDecorationType;
+let scriptDecorationType: vscode.TextEditorDecorationType;
 
 // ─── Activation ───────────────────────────────────────────────────────────────
 
@@ -69,6 +71,21 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(cveDecorationType);
 
+  // Install-script decoration (gold dashed — behavioral concern, not malicious)
+  scriptDecorationType = vscode.window.createTextEditorDecorationType({
+    backgroundColor: "rgba(234, 179, 8, 0.06)",
+    border: "1px dashed rgba(234, 179, 8, 0.40)",
+    borderRadius: "2px",
+    overviewRulerColor: "rgba(234, 179, 8, 0.7)",
+    overviewRulerLane: vscode.OverviewRulerLane.Right,
+    after: {
+      contentText: "  ⚠ install script",
+      color: "rgba(234, 179, 8, 0.95)",
+      fontWeight: "bold",
+    },
+  });
+  context.subscriptions.push(scriptDecorationType);
+
   // OSV.dev decoration type (blue highlight — free CVE feed, always-on)
   osvDecorationType = vscode.window.createTextEditorDecorationType({
     backgroundColor: "rgba(56, 139, 253, 0.10)",
@@ -107,6 +124,29 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand("npmSafetyGuard.showReport", () => {
       showWebviewReport(context);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("npmSafetyGuard.scanInstallScripts", async () => {
+      clearScriptCache();
+      const editor = vscode.window.activeTextEditor;
+      if (editor && isPackageJson(editor.document)) {
+        await scanInstallScripts(editor.document, editor);
+      } else {
+        const uris = await vscode.workspace.findFiles(
+          "**/package.json",
+          "**/node_modules/**",
+          20
+        );
+        for (const uri of uris) {
+          const doc = await vscode.workspace.openTextDocument(uri);
+          await scanInstallScripts(doc);
+        }
+        vscode.window.showInformationMessage(
+          `NPM Safety Guard (Install Scripts): Scanned ${uris.length} file(s).`
+        );
+      }
     })
   );
 
@@ -253,6 +293,11 @@ function scanDocument(doc: vscode.TextDocument, editor?: vscode.TextEditor) {
   // Fire-and-forget OSV scan in background (free, no auth, unlimited)
   if (vscode.workspace.getConfiguration("npmSafetyGuard").get<boolean>("enableOSV", true)) {
     void scanWithOSV(doc, editor, { silent: true });
+  }
+
+  // Fire-and-forget install-script audit (free, npm registry)
+  if (vscode.workspace.getConfiguration("npmSafetyGuard").get<boolean>("enableScriptCheck", true)) {
+    void scanInstallScripts(doc, editor, { silent: true });
   }
 
   // Show notification for critical findings
@@ -893,4 +938,118 @@ async function refreshRemoteDb(
   const result = await fetchRemoteEntries(storageDir, url);
   setRemoteEntries(result.entries);
   return result;
+}
+
+// ─── Install Script Auditor ───────────────────────────────────────────────────
+
+async function scanInstallScripts(
+  doc: vscode.TextDocument,
+  editor?: vscode.TextEditor,
+  opts: { silent?: boolean } = {}
+): Promise<void> {
+  if (!isPackageJson(doc)) return;
+
+  let parsed: Record<string, unknown>;
+  try { parsed = JSON.parse(doc.getText()); }
+  catch { return; }
+
+  const allDeps: Record<string, string> = {
+    ...(parsed.dependencies as Record<string, string> || {}),
+    ...(parsed.devDependencies as Record<string, string> || {}),
+    ...(parsed.peerDependencies as Record<string, string> || {}),
+    ...(parsed.optionalDependencies as Record<string, string> || {}),
+  };
+  if (Object.keys(allDeps).length === 0) return;
+
+  const customWhitelist = vscode.workspace
+    .getConfiguration("npmSafetyGuard")
+    .get<string[]>("scriptWhitelist", []);
+
+  const hits = await checkAllInstallScripts(allDeps, customWhitelist);
+
+  // Diagnostics — keep at Information so they don't drown the Problems panel
+  const scriptDiagnostics: vscode.Diagnostic[] = hits.map((hit) => {
+    const line = Math.max(0, findLineForPackage(doc, hit.package, hit.version));
+    const lineText = doc.lineAt(line).text;
+    const range = new vscode.Range(line, 0, line, lineText.length);
+
+    const presentScripts = Object.keys(hit.scripts).join(", ");
+    const d = new vscode.Diagnostic(
+      range,
+      `[NPM Safety Guard / Scripts] ${hit.package}@${hit.version} ships install hooks: ${presentScripts}.\n` +
+        `Hooks run BEFORE your code and are the most common malware vector. ` +
+        `Review the package source before installing.`,
+      vscode.DiagnosticSeverity.Information
+    );
+    d.source = "npm-safety-guard(scripts)";
+    d.code = {
+      value: `${hit.package}@${hit.version}`,
+      target: vscode.Uri.parse(`https://www.npmjs.com/package/${hit.package}/v/${hit.version}`),
+    };
+    return d;
+  });
+
+  // Merge with other diagnostics — replace only the script-source ones
+  const existing = diagnosticCollection.get(doc.uri) ?? [];
+  const nonScript = existing.filter((d) => d.source !== "npm-safety-guard(scripts)");
+  diagnosticCollection.set(doc.uri, [...nonScript, ...scriptDiagnostics]);
+
+  // Inline gold decorations — but skip packages already flagged red (malicious wins)
+  const activeEditor = editor ?? vscode.window.visibleTextEditors.find(
+    (e) => e.document.uri.toString() === doc.uri.toString()
+  );
+  if (activeEditor && getConfig("showInlineDecorations")) {
+    const flaggedByBundled = new Set(
+      (diagnosticCollection.get(doc.uri) ?? [])
+        .filter((d) => d.source === "npm-safety-guard")
+        .map((d) => typeof d.code === "object" ? (d.code as any).value : undefined)
+    );
+    const decorations: vscode.DecorationOptions[] = hits
+      .filter((hit) => !flaggedByBundled.has(`${hit.package}@${hit.version}`))
+      .map((hit) => {
+        const line = Math.max(0, findLineForPackage(doc, hit.package, hit.version));
+        const lineText = activeEditor.document.lineAt(line).text;
+        const md = new vscode.MarkdownString(buildScriptHoverMarkdown(hit));
+        md.isTrusted = true;
+        return { range: new vscode.Range(line, 0, line, lineText.length), hoverMessage: md };
+      });
+    activeEditor.setDecorations(scriptDecorationType, decorations);
+  }
+
+  if (!opts.silent) {
+    if (hits.length === 0) {
+      vscode.window.showInformationMessage(
+        "NPM Safety Guard (Scripts): No unfamiliar install hooks detected."
+      );
+    } else {
+      vscode.window.showWarningMessage(
+        `NPM Safety Guard (Scripts): ${hits.length} package(s) declare install hooks.`,
+        "View Report"
+      ).then((choice) => {
+        if (choice === "View Report") {
+          vscode.commands.executeCommand("npmSafetyGuard.showReport");
+        }
+      });
+    }
+  }
+}
+
+function buildScriptHoverMarkdown(hit: ScriptCheckResult): string {
+  let md = `### ⚠️ Install Script Detected\n\n`;
+  md += `**Package:** \`${hit.package}@${hit.version}\`\n\n`;
+  md += `This package runs code at install time via the following hook(s):\n\n`;
+
+  for (const [hook, cmd] of Object.entries(hit.scripts)) {
+    if (!cmd) continue;
+    const truncated = cmd.length > 120 ? cmd.slice(0, 120) + "…" : cmd;
+    md += `- **\`${hook}\`** → \`${truncated.replace(/`/g, "\\`")}\`\n`;
+  }
+
+  md += `\n💡 Install hooks are the #1 supply-chain attack vector. They run BEFORE any of your code, with full filesystem and network access.\n\n`;
+  md += `**Mitigations:**\n`;
+  md += `- Run \`npm install --ignore-scripts\` to skip hooks\n`;
+  md += `- Audit the script content on npm before installing\n`;
+  md += `- If this package is trusted, add \`"${hit.package}"\` to \`npmSafetyGuard.scriptWhitelist\` in settings\n\n`;
+  md += `[View on npmjs.com](https://www.npmjs.com/package/${hit.package}/v/${hit.version})`;
+  return md;
 }

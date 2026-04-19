@@ -1,8 +1,8 @@
 {
   "name": "npm-safety-guard",
   "displayName": "NPM Safety Guard",
-  "description": "Detects malicious npm packages & CVE vulnerabilities before installation. Live OSV.dev coverage + supply chain attack DB (Shai-Hulud, Axios/DPRK RAT, event-stream, and more). By SendWaveHub.",
-  "version": "1.2.1",
+  "description": "Detects malicious npm packages, CVEs, and risky install hooks before installation. Live OSV.dev + supply chain attack DB (Shai-Hulud, Axios/DPRK RAT, Lazarus, event-stream). By SendWaveHub.",
+  "version": "1.3.0",
   "publisher": "Sendwavehubtech",
   "author": {
     "name": "SendWaveHub",
@@ -54,6 +54,10 @@
       {
         "command": "npmSafetyGuard.refreshDb",
         "title": "NPM Safety Guard: Refresh Malware Database"
+      },
+      {
+        "command": "npmSafetyGuard.scanInstallScripts",
+        "title": "NPM Safety Guard: Audit Install Scripts (preinstall/postinstall)"
       }
     ],
     "configuration": {
@@ -83,6 +87,17 @@
           "type": "string",
           "default": "",
           "description": "Custom URL for the malicious-package feed (JSON array of MaliciousEntry). Leave blank for the official feed."
+        },
+        "npmSafetyGuard.enableScriptCheck": {
+          "type": "boolean",
+          "default": true,
+          "description": "Audit each dependency's published metadata for preinstall / install / postinstall / prepare scripts. The #1 supply-chain attack vector."
+        },
+        "npmSafetyGuard.scriptWhitelist": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Additional package names to suppress from install-script warnings (e.g. internal tooling). Bundled whitelist already covers bcrypt, sharp, esbuild, husky, prisma, sqlite3, etc."
         },
         "npmSafetyGuard.rlToken": {
           "type": "string",

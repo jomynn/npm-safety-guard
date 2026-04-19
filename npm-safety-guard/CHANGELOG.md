@@ -2,6 +2,15 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.3.0] — 2026-04-19
+
+### Added
+- **Install-script auditor** — every dependency's published `preinstall` / `install` / `postinstall` / `prepare` script is fetched from the npm registry and flagged. These hooks run before any of your code with full filesystem and network access — the #1 supply-chain attack vector (Shai-Hulud, Lazarus, Axios all use them).
+- **Curated whitelist** of ~30 packages that legitimately need install scripts (bcrypt, sharp, esbuild, husky, prisma, sqlite3, electron, puppeteer, etc.) — these are silenced by default.
+- **Gold dashed inline decoration** with `⚠ install script` marker; hover shows the actual hook command(s) and mitigations (`npm install --ignore-scripts`).
+- **New settings:** `npmSafetyGuard.enableScriptCheck` (default on), `npmSafetyGuard.scriptWhitelist` (string array for custom whitelisting).
+- **New command:** `NPM Safety Guard: Audit Install Scripts (preinstall/postinstall)`.
+
 ## [1.2.1] — 2026-04-19
 
 ### Changed
