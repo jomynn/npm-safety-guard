@@ -2,40 +2,37 @@
 
 > Built by [SendWaveHub](https://sendwavehub.tech) — SaaS tools for developers
 
-Detects malicious npm packages and CVE vulnerabilities in your `package.json` **before** you run `npm install`. Zero config, zero signup, works offline.
+Stops malicious npm packages, supply chain attacks, and known CVEs **before** `npm install` ever runs. Eight detection layers, zero signup, offline-capable.
 
-## Features
+```
+$ code --install-extension Sendwavehubtech.npm-safety-guard
+```
 
-- 🔴 **Live malware DB** — bundled list of known supply chain attacks (Shai-Hulud, Axios/DPRK RAT, Lazarus/Marstech, event-stream, node-ipc, more), auto-refreshed daily from a community feed on GitHub
-- 🟡 **Install-script auditor** — flags every dependency that ships `preinstall` / `install` / `postinstall` / `prepare` hooks (the #1 attack vector). Curated whitelist for legit packages
-- 🔬 **Deep tarball scanner** — on-demand command downloads each published tarball and regex-scans for `eval`, `new Function`, base64 blobs, `String.fromCharCode` reconstruction, split-file payloads, credential-path writes, Shai-Hulud-style self-publish, and obfuscation fingerprints
-- 📋 **Lockfile scanner** — walks your `package-lock.json` / `yarn.lock` and checks every resolved transitive dep, catching compromises like flatmap-stream-via-event-stream that a package.json-only scan misses
-- 📊 **Risk heuristics** — scores each dependency 0–100 from npm registry metadata: package age, version age, maintainer takeover (publisher not in maintainers list), deprecation, and weekly download velocity
-- 🔍 **Typosquat & homoglyph detector** — Damerau-Levenshtein vs a top-250 package list catches `axioss → axios` / `raect → react`. Cyrillic/Greek lookalikes (`rеact` with a Cyrillic 'е') flagged as ERROR. Instant, offline
-- 🔵 **OSV.dev CVE scanning** — every save queries Google's OSV.dev for every known CVE in the npm ecosystem. Free, no API key required
-- 🟠 **ReversingLabs deep scan** — optional premium CVE + malware analysis (free token at [secure.software](https://secure.software))
-- 📋 **Security Report** webview with fix instructions and copy-ready `npm install` commands
-- 💡 **Inline warnings** on the exact line of the bad dependency, with hover cards showing CVE IDs, fixed versions, and advisory links
-- 📌 **Status bar** shield indicator — always visible
-- 🔌 **Offline-first** — bundled DB works without network; remote feed and OSV are fail-open
+Or open the **Extensions** sidebar and search "NPM Safety Guard".
 
-## Detection layers
+## Why
 
-| Layer | Default | What it catches | Needs network? |
+The npm ecosystem ships ~1 supply chain attack per week ([Shai-Hulud worm](https://unit42.paloaltonetworks.com/npm-supply-chain-attack/), [Axios DPRK RAT](https://snyk.io/blog/axios-npm-package-compromised-supply-chain-attack-delivers-cross-platform/), [Lazarus/Marstech](https://thehackernews.com/2026/02/lazarus-campaign-plants-malicious.html), [event-stream](https://github.com/dominictarr/event-stream/issues/116)). Most discovery happens *after* developers have already run `npm install`. NPM Safety Guard catches them at the moment you open `package.json`.
+
+## What it catches
+
+| Layer | When it runs | Cost | Catches |
 |---|---|---|---|
-| Bundled malware DB | ✅ on | Known supply-chain attacks (curated) | No |
-| Remote malware feed | ✅ on | Community feed, refreshed every 24h | Yes (fail-open) |
-| OSV.dev CVE scan | ✅ on | Every known CVE across npm ecosystem | Yes (fail-open) |
-| Install-script audit | ✅ on | Packages with preinstall/postinstall hooks | Yes (fail-open) |
-| Typosquat / homoglyph | ✅ on | Name-similarity attacks (instant, offline) | No |
-| Deep tarball scan | On-demand | Obfuscation, eval, payload blobs, self-publish | Yes (command) |
-| ReversingLabs deep scan | Opt-in | Binary analysis, tampering detection | Yes (token required) |
+| 🔴 **Bundled malware DB** | every save | offline | Curated supply-chain attacks (Shai-Hulud, Axios, Lazarus, event-stream, node-ipc) |
+| 🔴 **Remote feed** | every 24h | 1 HTTP/day | Community-maintained additions, no extension republish |
+| 🔵 **OSV.dev CVE scan** | every save | 1 HTTP/dep | Every known CVE in the npm ecosystem |
+| 🟡 **Install-script audit** | every save | 1 HTTP/dep | Packages with `preinstall`/`postinstall`/`prepare` hooks (the #1 attack vector) |
+| 🟣 **Typosquat + homoglyph** | every save | offline, instant | `axioss → axios`, `rеact` (Cyrillic 'е'), Damerau-Levenshtein vs top-250 |
+| 🔬 **Deep tarball AST scan** | command | N downloads | `eval`, `new Function`, base64 blobs, `String.fromCharCode` reconstruction, split-file payloads, Shai-Hulud `npm publish` self-propagation |
+| 📋 **Lockfile walk** | command | 0 | Transitive compromises (catches `flatmap-stream@0.1.1` shipped via `event-stream@3.3.6`) |
+| 📊 **Risk heuristics** | command | 2 HTTP/dep | 0–100 score from package age, maintainer takeover, deprecation, download velocity |
+| 🟠 **ReversingLabs deep scan** | command (opt-in) | needs token | Binary tampering analysis ([free token](https://secure.software)) |
 
-## Covered attacks (bundled + remote)
+## Real attacks covered out of the box
 
 | Package | Versions | Campaign |
 |---|---|---|
-| `axios` | 1.14.1, 0.30.4 | 🔴 Sapphire Sleet (DPRK) RAT drop, Mar 2026 |
+| `axios` | 1.14.1, 0.30.4 | 🔴 Sapphire Sleet (DPRK) RAT, Mar 2026 |
 | `plain-crypto-js` | 4.2.1 | 🔴 RAT dropper (WAVESHAPER.V2) |
 | `@shadanai/openclaw` | 2026.3.x | 🔴 Axios campaign vector |
 | `@qqbrowser/openclaw-qbot` | 0.0.130 | 🔴 Axios campaign vector |
@@ -46,57 +43,76 @@ Detects malicious npm packages and CVE vulnerabilities in your `package.json` **
 | `event-stream` | 3.3.6 | 🟠 Crypto wallet theft (2018) |
 | `node-ipc` | 10.1.1-11.0.0 | 🟠 Protestware (2022) |
 
-Plus every CVE in the npm ecosystem via OSV.dev — and the remote feed grows without extension updates.
+Plus every CVE in the npm ecosystem via OSV.dev — and the [community feed](https://github.com/jomynn/npm-safety-guard/blob/main/db/malicious-packages.json) grows without extension updates.
+
+## How it looks in your editor
+
+Open any `package.json`. Within ~1 second you see:
+
+- 🔴 **Red highlight** on lines with known-malicious packages
+- 🟣 **Purple highlight** on typosquats / homoglyphs (`axioss`, `rеact` with Cyrillic 'е')
+- 🟡 **Gold dashed** on packages with install hooks (with mitigation: `npm install --ignore-scripts`)
+- 🔵 **Blue highlight** on packages with active CVEs (hover shows fix version)
+- 📌 **Status bar** shield indicator with threat count
+
+Hover any flagged line for the full report — CVE IDs, advisory links, fix commands.
 
 ## Commands
 
-Open the command palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
+Open the command palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and type "NPM Safety Guard":
 
-- **NPM Safety Guard: Scan package.json Now** — rerun the bundled + OSV scan
-- **NPM Safety Guard: Show Security Report** — open the webview report
-- **NPM Safety Guard: Scan with OSV.dev (CVEs)** — force-refresh OSV results
-- **NPM Safety Guard: Check ReversingLabs (CVE + Malware)** — premium scan (needs token)
-- **NPM Safety Guard: Refresh Malware Database** — pull the latest remote feed now
-- **NPM Safety Guard: Audit Install Scripts (preinstall/postinstall)** — re-fetch and flag dependency install hooks
-- **NPM Safety Guard: Deep Scan All Dependencies (tarball AST)** — download and inspect every tarball for eval, obfuscation, split-file payloads (opens a detailed webview report)
-- **NPM Safety Guard: Scan Lockfile (full resolved tree)** — walk `package-lock.json` / `yarn.lock` and check every transitive dep against all detection layers
-- **NPM Safety Guard: Compute Risk Heuristics** — score each dependency 0–100 from npm metadata (age, maintainers, downloads, deprecation)
-- **NPM Safety Guard: Check Typosquats / Homoglyphs** — instant offline name-similarity scan (also runs on every save)
-
-Or click the 🛡 shield in the status bar to open the security report.
+| Command | What it does |
+|---|---|
+| **Scan package.json Now** | Re-run all auto-scan layers |
+| **Show Security Report** | Open the bundled-DB findings webview |
+| **Scan with OSV.dev** | Force-refresh CVE results |
+| **Audit Install Scripts** | Force-refresh install-hook check |
+| **Refresh Malware Database** | Pull the latest community feed now |
+| **Check Typosquats / Homoglyphs** | Force-refresh name-similarity check |
+| **Compute Risk Heuristics** | 0–100 risk score per dep (age/maintainers/downloads) |
+| **Deep Scan All Dependencies** | Tarball download + AST scan, opens detailed webview |
+| **Scan Lockfile** | Walk `package-lock.json` / `yarn.lock`, check every transitive dep |
+| **Check ReversingLabs** | Premium binary analysis (needs free token) |
 
 ## Settings
 
 | Setting | Default | Description |
 |---|---|---|
 | `npmSafetyGuard.enableAutoScan` | `true` | Scan on open/save |
-| `npmSafetyGuard.showInlineDecorations` | `true` | Show red/blue inline highlights |
-| `npmSafetyGuard.enableOSV` | `true` | Query OSV.dev for CVEs (free, auto) |
+| `npmSafetyGuard.showInlineDecorations` | `true` | Inline highlights in package.json |
+| `npmSafetyGuard.enableOSV` | `true` | Free CVE scan via OSV.dev |
 | `npmSafetyGuard.enableRemoteDb` | `true` | Pull community malware feed every 24h |
 | `npmSafetyGuard.remoteDbUrl` | *blank* | Override the malware feed URL |
-| `npmSafetyGuard.enableScriptCheck` | `true` | Audit dependencies for install-time hooks |
-| `npmSafetyGuard.scriptWhitelist` | `[]` | Extra package names to silence from script warnings |
-| `npmSafetyGuard.rlToken` | *blank* | ReversingLabs Spectra Assure token ([get one free](https://secure.software)) |
+| `npmSafetyGuard.enableScriptCheck` | `true` | Audit dependencies for install hooks |
+| `npmSafetyGuard.scriptWhitelist` | `[]` | Extra packages to silence from script warnings |
+| `npmSafetyGuard.enableTyposquat` | `true` | Name-similarity + homoglyph detection |
+| `npmSafetyGuard.rlToken` | *blank* | ReversingLabs Spectra Assure token ([free at secure.software](https://secure.software)) |
 
 ## Privacy
 
-- The **bundled DB** is 100% offline.
-- The **OSV.dev scanner** sends `<package-name>@<version>` over HTTPS to `api.osv.dev`. Package names are public metadata from the npm registry.
+- The **bundled DB**, **typosquat / homoglyph**, and **lockfile** layers are 100% offline.
+- The **OSV.dev scanner** sends `<package-name>@<version>` over HTTPS to `api.osv.dev`. Package names are public metadata.
 - The **remote feed** is a plain HTTPS GET to `raw.githubusercontent.com`. No request body, no tracking.
-- **ReversingLabs** calls happen only when you set a token and run the command.
+- The **install-script auditor** and **registry heuristics** call `registry.npmjs.org` and `api.npmjs.org` — same as `npm install` does.
+- The **deep tarball scanner** downloads `.tgz` files from `registry.npmjs.org` (the same artifacts npm fetches).
+- **ReversingLabs** is opt-in and only runs when you set a token and invoke the command.
 
-All network calls are fail-open — if anything is unreachable, the extension keeps working with its offline layers.
+All network calls are fail-open — if anything is unreachable, every other layer keeps working.
 
 ## Reporting a new malicious package
 
-Edit [`db/malicious-packages.json`](https://github.com/jomynn/npm-safety-guard/blob/main/db/malicious-packages.json) and open a PR. Entries go live in every install within 24h — no extension republish needed.
+1. Edit [`db/malicious-packages.json`](https://github.com/jomynn/npm-safety-guard/blob/main/db/malicious-packages.json) on GitHub
+2. Open a PR
+3. Once merged, every install picks it up within 24h
 
 ## Credits
 
-- CVE data from [OSV.dev](https://osv.dev)
+- CVE data from [OSV.dev](https://osv.dev) (Google)
 - Premium deep scan via [ReversingLabs Spectra Assure](https://secure.software)
 - Inspired by [Aikido Safe Chain](https://github.com/AikidoSec/safe-chain) and [OSSF malicious-packages](https://github.com/ossf/malicious-packages)
 
 ## About
 
 Maintained by [SendWaveHub](https://sendwavehub.tech). Check out our other developer tools at **[sendwavehub.tech](https://sendwavehub.tech)**.
+
+Found this useful? ⭐️ the [GitHub repo](https://github.com/jomynn/npm-safety-guard) and leave a review on the [Marketplace](https://marketplace.visualstudio.com/items?itemName=Sendwavehubtech.npm-safety-guard).

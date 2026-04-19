@@ -2,6 +2,11 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.7.1] — 2026-04-19
+
+### Changed
+- README rewritten with the complete 8-layer matrix, live-attack coverage table, all 10 commands, and a clean privacy section. The Marketplace listing now reflects everything shipped between v1.0 and v1.7.
+
 ## [1.7.0] — 2026-04-19
 
 ### Added
