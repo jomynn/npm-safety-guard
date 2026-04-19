@@ -3,7 +3,7 @@
   "displayName": "NPM Safety Guard",
   "description": "Detects malicious npm packages & CVE vulnerabilities before installation. Covers supply chain attacks (Axios 1.14.1 / DPRK RAT), GlassWorm, event-stream and more. By SendWaveHub.",
   "version": "1.0.0",
-  "publisher": "sendwavehub",
+  "publisher": "Sendwavehubtech",
   "author": {
     "name": "SendWaveHub",
     "url": "https://sendwavehub.tech"
@@ -15,7 +15,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/sendwavehub/npm-safety-guard"
+    "url": "https://github.com/jomynn/npm-safety-guard"
   },
   "sponsor": {
     "url": "https://sendwavehub.tech"
