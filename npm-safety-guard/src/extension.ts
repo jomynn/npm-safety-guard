@@ -592,39 +592,57 @@ function updateStatusBar(hitCount: number, _uri?: vscode.Uri) {
 
 let reportPanel: vscode.WebviewPanel | undefined;
 
-async function showWebviewReport(context: vscode.ExtensionContext) {
-  // Collect all current diagnostics
-  const allHits: Array<{ file: string; hit: ScanHit }> = [];
-  diagnosticCollection.forEach((uri, diags) => {
-    diags.forEach(d => {
-      // Reconstruct minimal hit from diagnostic
-      allHits.push({ file: uri.fsPath, hit: { name: "", version: "", entry: {} as MaliciousEntry, line: d.range.start.line } });
-    });
-  });
+interface ReportFinding {
+  layer: "malware" | "cve" | "scripts" | "typosquat" | "rl";
+  severity: vscode.DiagnosticSeverity;
+  package: string;   // e.g. "axios@1.7.0" — parsed from diagnostic.code.value
+  message: string;
+  file: string;
+  line: number;
+  advisoryUrl?: string;
+}
 
-  // Re-scan all open package.json files fresh for report data
-  const freshHits: Array<{ file: string; hits: ScanHit[] }> = [];
-  const pkgFiles = await vscode.workspace.findFiles("**/package.json", "**/node_modules/**", 20);
-  
+function categoriseSource(source: string | undefined): ReportFinding["layer"] | null {
+  if (!source) return null;
+  if (source === "npm-safety-guard") return "malware";
+  if (source === "npm-safety-guard(OSV)") return "cve";
+  if (source === "npm-safety-guard(scripts)") return "scripts";
+  if (source === "npm-safety-guard(typosquat)") return "typosquat";
+  if (source === "npm-safety-guard(RL)") return "rl";
+  return null;
+}
+
+async function showWebviewReport(context: vscode.ExtensionContext) {
+  // Refresh: re-scan every package.json so diagnostics are current
+  const pkgFiles = await vscode.workspace.findFiles("**/package.json", "**/node_modules/**", 50);
   for (const uri of pkgFiles) {
     try {
       const doc = await vscode.workspace.openTextDocument(uri);
-      const parsed = JSON.parse(doc.getText());
-      const allDeps: Record<string, string> = {
-        ...(parsed.dependencies || {}),
-        ...(parsed.devDependencies || {}),
-        ...(parsed.peerDependencies || {}),
-        ...(parsed.optionalDependencies || {})
-      };
-      const rawHits = checkDependencies(allDeps);
-      if (rawHits.length > 0) {
-        freshHits.push({
-          file: uri.fsPath,
-          hits: rawHits.map(h => ({ ...h, line: findLineForPackage(doc, h.name, h.version) }))
-        });
-      }
+      scanDocument(doc);
     } catch { /* skip */ }
   }
+
+  // Aggregate EVERY diagnostic from EVERY detection layer
+  const findings: ReportFinding[] = [];
+  diagnosticCollection.forEach((uri, diags) => {
+    for (const d of diags) {
+      const layer = categoriseSource(d.source);
+      if (!layer) continue;
+      const codeValue = typeof d.code === "object" && d.code !== null ? (d.code as any).value : String(d.code ?? "");
+      const advisoryUrl = typeof d.code === "object" && d.code !== null && (d.code as any).target
+        ? (d.code as any).target.toString()
+        : undefined;
+      findings.push({
+        layer,
+        severity: d.severity ?? vscode.DiagnosticSeverity.Warning,
+        package: String(codeValue),
+        message: d.message,
+        file: uri.fsPath,
+        line: d.range.start.line,
+        advisoryUrl,
+      });
+    }
+  });
 
   if (reportPanel) {
     reportPanel.reveal(vscode.ViewColumn.One);
@@ -638,47 +656,79 @@ async function showWebviewReport(context: vscode.ExtensionContext) {
     reportPanel.onDidDispose(() => { reportPanel = undefined; });
   }
 
-  reportPanel.webview.html = buildReportHtml(freshHits, pkgFiles.length);
+  reportPanel.webview.html = buildReportHtml(findings, pkgFiles.length);
 }
 
 function buildReportHtml(
-  results: Array<{ file: string; hits: ScanHit[] }>,
+  findings: ReportFinding[],
   scanned: number
 ): string {
-  const totalHits = results.reduce((a, r) => a + r.hits.length, 0);
-  const criticals = results.flatMap(r => r.hits).filter(h => h.entry.severity === "critical").length;
+  const escape = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+  const totalHits = findings.length;
+  const byLayer = {
+    malware: findings.filter((f) => f.layer === "malware"),
+    cve: findings.filter((f) => f.layer === "cve"),
+    scripts: findings.filter((f) => f.layer === "scripts"),
+    typosquat: findings.filter((f) => f.layer === "typosquat"),
+    rl: findings.filter((f) => f.layer === "rl"),
+  };
+  const criticals = findings.filter((f) => f.severity === vscode.DiagnosticSeverity.Error).length;
   const now = new Date().toLocaleString();
 
-  const resultsHtml = results.length === 0
-    ? `<div class="clean"><span class="icon">✅</span><h2>All Clear</h2><p>No known malicious packages detected in ${scanned} scanned file(s).</p></div>`
-    : results.map(r => `
-        <div class="file-block">
-          <div class="file-path">📄 ${r.file}</div>
-          ${r.hits.map(hit => `
-            <div class="hit ${hit.entry.severity}">
-              <div class="hit-header">
-                <span class="badge ${hit.entry.severity}">${hit.entry.severity.toUpperCase()}</span>
-                <strong>${hit.entry.title}</strong>
-              </div>
-              <div class="pkg-line">
-                <code>${hit.name}@${hit.version}</code>
-                ${hit.entry.safeVersion ? `<span class="safe">→ Safe: <code>${hit.name}@${hit.entry.safeVersion}</code></span>` : ""}
-              </div>
-              <p class="desc">${hit.entry.description}</p>
-              <div class="fix-box">
-                <strong>Fix:</strong><br>
-                ${hit.entry.safeVersion
-                  ? `<code>npm install ${hit.name}@${hit.entry.safeVersion}</code>`
-                  : `<code>npm uninstall ${hit.name}</code>`}
-              </div>
-              <div class="reported">Reported: ${hit.entry.reportedAt} · 
-                ${hit.entry.sources.map((s, i) => `<a href="${s}">Source ${i+1}</a>`).join(" ")}
-              </div>
+  const LAYER_META: Record<ReportFinding["layer"], { title: string; icon: string; color: string }> = {
+    malware:   { title: "Known Malicious Packages",  icon: "🔴", color: "critical" },
+    cve:       { title: "CVE Vulnerabilities (OSV)", icon: "🔵", color: "high" },
+    scripts:   { title: "Install Script Hooks",      icon: "🟡", color: "medium" },
+    typosquat: { title: "Typosquat / Homoglyph",     icon: "🟣", color: "high" },
+    rl:        { title: "ReversingLabs Findings",    icon: "🟠", color: "high" },
+  };
+
+  // Group findings inside each layer by package to reduce clutter
+  function groupByPackage(items: ReportFinding[]): Map<string, ReportFinding[]> {
+    const m = new Map<string, ReportFinding[]>();
+    for (const f of items) {
+      const key = f.package || f.file;
+      if (!m.has(key)) m.set(key, []);
+      m.get(key)!.push(f);
+    }
+    return m;
+  }
+
+  function renderLayer(layer: ReportFinding["layer"]): string {
+    const items = byLayer[layer];
+    if (items.length === 0) return "";
+    const meta = LAYER_META[layer];
+    const grouped = groupByPackage(items);
+    const entries = [...grouped.entries()]
+      .sort((a, b) => b[1].length - a[1].length)
+      .map(([pkg, group]) => {
+        const first = group[0];
+        const fileLabel = first.file.replace(/^.*[\\/]/, "…/") + (first.line ? `:${first.line + 1}` : "");
+        const messages = group.slice(0, 3).map((g) => `<div class="finding-msg">${escape(g.message.split("\n").slice(0, 4).join("<br>"))}</div>`).join("");
+        const more = group.length > 3 ? `<div class="finding-more">…and ${group.length - 3} more occurrence(s)</div>` : "";
+        return `
+          <div class="finding-card ${meta.color}">
+            <div class="finding-header">
+              <code class="pkg-tag">${escape(pkg || "unknown")}</code>
+              <span class="finding-file">${escape(fileLabel)}</span>
+              ${first.advisoryUrl ? `<a class="adv-link" href="${escape(first.advisoryUrl)}">advisory →</a>` : ""}
             </div>
-          `).join("")}
-        </div>
-      `).join("");
+            ${messages}
+            ${more}
+          </div>
+        `;
+      }).join("");
+    return `
+      <h2 class="section">${meta.icon} ${meta.title} (${items.length})</h2>
+      ${entries}
+    `;
+  }
+
+  const resultsHtml = findings.length === 0
+    ? `<div class="clean"><span class="icon">✅</span><h2>All Clear</h2><p>No findings from any detection layer in ${scanned} scanned file(s).</p></div>`
+    : (["malware", "cve", "typosquat", "scripts", "rl"] as const).map(renderLayer).join("");
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -762,8 +812,25 @@ function buildReportHtml(
   .clean .icon { font-size: 3rem; display: block; margin-bottom: 12px; }
   .clean h2 { font-size: 1.4rem; margin-bottom: 8px; }
   .clean p { color: #8b949e; }
-  h2.section { font-size: 1rem; color: #8b949e; margin-bottom: 12px; 
+  h2.section { font-size: 1rem; color: #8b949e; margin: 28px 0 12px;
     text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #21262d; padding-bottom: 6px; }
+  .finding-card {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 6px; padding: 10px 14px; margin-bottom: 8px;
+  }
+  .finding-card.critical { border-left: 3px solid #f85149; }
+  .finding-card.high     { border-left: 3px solid #d29922; }
+  .finding-card.medium   { border-left: 3px solid #388bfd; }
+  .finding-header {
+    display: flex; gap: 10px; align-items: center;
+    flex-wrap: wrap; margin-bottom: 6px;
+  }
+  .pkg-tag { background: #0d1117; color: #ff7b72; padding: 2px 8px; border-radius: 3px; font-size: 0.85rem; font-family: 'Cascadia Code', monospace; }
+  .finding-file { color: #8b949e; font-size: 0.75rem; font-family: monospace; }
+  .adv-link { color: #388bfd; font-size: 0.75rem; text-decoration: none; margin-left: auto; }
+  .finding-msg { color: #c9d1d9; font-size: 0.82rem; padding: 4px 0; border-top: 1px solid #21262d; }
+  .finding-msg:first-of-type { border-top: 0; }
+  .finding-more { color: #8b949e; font-size: 0.75rem; padding-top: 4px; font-style: italic; }
 </style>
 </head>
 <body>
@@ -773,11 +840,23 @@ function buildReportHtml(
   <div class="summary">
     <div class="stat ${totalHits === 0 ? 'ok' : 'danger'}">
       <div class="num">${totalHits}</div>
-      <div class="lbl">Threats Found</div>
+      <div class="lbl">Total Findings</div>
     </div>
-    <div class="stat ${criticals === 0 ? 'ok' : 'danger'}">
-      <div class="num">${criticals}</div>
-      <div class="lbl">Critical</div>
+    <div class="stat ${byLayer.malware.length === 0 ? 'ok' : 'danger'}">
+      <div class="num">${byLayer.malware.length}</div>
+      <div class="lbl">Malware</div>
+    </div>
+    <div class="stat ${byLayer.cve.length === 0 ? 'ok' : 'warn'}">
+      <div class="num">${byLayer.cve.length}</div>
+      <div class="lbl">CVEs</div>
+    </div>
+    <div class="stat ${byLayer.typosquat.length === 0 ? 'ok' : 'warn'}">
+      <div class="num">${byLayer.typosquat.length}</div>
+      <div class="lbl">Typosquats</div>
+    </div>
+    <div class="stat ${byLayer.scripts.length === 0 ? 'ok' : 'warn'}">
+      <div class="num">${byLayer.scripts.length}</div>
+      <div class="lbl">Install Hooks</div>
     </div>
     <div class="stat ok">
       <div class="num">${scanned}</div>
@@ -785,7 +864,6 @@ function buildReportHtml(
     </div>
   </div>
 
-  ${totalHits > 0 ? '<h2 class="section">Findings</h2>' : ""}
   ${resultsHtml}
 
   <div style="

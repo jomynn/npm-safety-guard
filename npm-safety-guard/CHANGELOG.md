@@ -2,6 +2,12 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.7.2] — 2026-04-19
+
+### Fixed
+- **Security Report webview now aggregates ALL detection layers.** Previously it only queried the bundled malware DB, so workspaces with dozens of real OSV CVE findings or install-script warnings in the Problems panel would still see a misleading "All Clear ✅" in the report. The report now pulls every diagnostic from every source (malware / CVE / typosquat / install-script / ReversingLabs), groups them by package, and shows per-layer counts in the summary stats.
+- **Summary stats expanded** from 3 tiles to 6: Total Findings / Malware / CVEs / Typosquats / Install Hooks / Files Scanned — so the one-glance view matches the Problems panel.
+
 ## [1.7.1] — 2026-04-19
 
 ### Changed
