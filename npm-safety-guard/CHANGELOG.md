@@ -2,6 +2,19 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.6.0] — 2026-04-19
+
+### Added
+- **Registry heuristics scanner** — new command `NPM Safety Guard: Compute Risk Heuristics (age / maintainers / downloads)` queries npm registry metadata and scores each dependency 0–100 on:
+  - Package age (< 30 days = +35, < 90 = +15)
+  - Version age (< 7 days = +10)
+  - Maintainer takeover — latest version published by an account NOT in the maintainers list (+40, strong signal). Same publisher rotated to a known co-maintainer is downgraded to +5 (normal).
+  - Single-maintainer projects (+5, low bus-factor)
+  - Deprecated flag (+40, with the deprecation message)
+  - Weekly download velocity (< 100 = +20, < 1000 = +8)
+- Dedicated webview report sorted by score, with metric line per-package (age, maintainers, publisher, downloads).
+- Tested against `axios`, `lodash`, `chalk`, `request`, `left-pad`, `ms`, `is-thirteen`. Correctly flags `request` and `left-pad` as DEPRECATED. False-positive prevention: `ms` no longer flagged as takeover because publisher rotation between known maintainers is treated as benign.
+
 ## [1.5.0] — 2026-04-19
 
 ### Added

@@ -10,6 +10,7 @@ const remoteDb_1 = require("./remoteDb");
 const installScriptChecker_1 = require("./installScriptChecker");
 const deepScanner_1 = require("./deepScanner");
 const lockfileScanner_1 = require("./lockfileScanner");
+const registryHeuristics_1 = require("./registryHeuristics");
 // ─── Globals ──────────────────────────────────────────────────────────────────
 let diagnosticCollection;
 let statusBarItem;
@@ -110,6 +111,24 @@ function activate(context) {
     }));
     context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.scanLockfile", async () => {
         await runLockfileScan();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.checkHeuristics", async () => {
+        (0, registryHeuristics_1.clearHeuristicsCache)();
+        const editor = vscode.window.activeTextEditor;
+        let doc;
+        if (editor && isPackageJson(editor.document)) {
+            doc = editor.document;
+        }
+        else {
+            const uris = await vscode.workspace.findFiles("**/package.json", "**/node_modules/**", 1);
+            if (uris.length > 0)
+                doc = await vscode.workspace.openTextDocument(uris[0]);
+        }
+        if (!doc) {
+            vscode.window.showInformationMessage("NPM Safety Guard: No package.json found.");
+            return;
+        }
+        await runHeuristics(doc);
     }));
     context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.deepScan", async () => {
         (0, deepScanner_1.clearDeepScanCache)();
@@ -871,6 +890,150 @@ async function scanInstallScripts(doc, editor, opts = {}) {
             });
         }
     }
+}
+// ─── Registry Heuristics ──────────────────────────────────────────────────────
+let heuristicsPanel;
+async function runHeuristics(doc) {
+    let parsed;
+    try {
+        parsed = JSON.parse(doc.getText());
+    }
+    catch {
+        vscode.window.showErrorMessage("NPM Safety Guard: Cannot parse package.json.");
+        return;
+    }
+    const allDeps = {
+        ...(parsed.dependencies || {}),
+        ...(parsed.devDependencies || {}),
+        ...(parsed.peerDependencies || {}),
+        ...(parsed.optionalDependencies || {}),
+    };
+    if (Object.keys(allDeps).length === 0) {
+        vscode.window.showInformationMessage("NPM Safety Guard: No dependencies to check.");
+        return;
+    }
+    const results = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `NPM Safety Guard: Computing risk heuristics for ${Object.keys(allDeps).length} packages…`,
+        cancellable: false,
+    }, async (progress) => {
+        return (0, registryHeuristics_1.checkAllHeuristics)(allDeps, (done, total, pkg) => {
+            progress.report({
+                message: `${done}/${total} — ${pkg}`,
+                increment: (1 / total) * 100,
+            });
+        });
+    });
+    showHeuristicsReport(doc.fileName, results, Object.keys(allDeps).length);
+}
+function showHeuristicsReport(filePath, results, totalDeps) {
+    if (heuristicsPanel) {
+        heuristicsPanel.reveal(vscode.ViewColumn.One);
+    }
+    else {
+        heuristicsPanel = vscode.window.createWebviewPanel("npmSafetyGuardHeuristics", "NPM Safety Guard — Risk Heuristics", vscode.ViewColumn.One, { enableScripts: false });
+        heuristicsPanel.onDidDispose(() => { heuristicsPanel = undefined; });
+    }
+    heuristicsPanel.webview.html = buildHeuristicsHtml(filePath, results, totalDeps);
+}
+function buildHeuristicsHtml(filePath, results, totalDeps) {
+    const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const flagged = results.length;
+    const critical = results.filter((r) => r.riskLevel === "critical").length;
+    const high = results.filter((r) => r.riskLevel === "high").length;
+    const now = new Date().toLocaleString();
+    results.sort((a, b) => b.riskScore - a.riskScore);
+    const cardsHtml = results.length === 0
+        ? `<div class="clean"><span class="icon">✅</span><h2>No risky packages detected</h2><p>Computed heuristics for ${totalDeps} package(s). All cleared the score 30 threshold.</p></div>`
+        : results.map((r) => `
+        <div class="hit ${r.riskLevel}">
+          <div class="hit-header">
+            <span class="score-badge ${r.riskLevel}">${r.riskScore}</span>
+            <strong>${escape(r.package)}</strong>
+            <code>@${escape(r.version)}</code>
+            ${r.deprecated ? '<span class="chip danger">DEPRECATED</span>' : ""}
+            ${r.maintainerTakeover && r.publisherIsMaintainer === false ? '<span class="chip danger">TAKEOVER</span>' : ""}
+            ${!r.isLatestVersion && r.latestVersion ? `<span class="chip">latest is ${escape(r.latestVersion)}</span>` : ""}
+          </div>
+          <div class="metrics">
+            <span><b>Pkg age:</b> ${r.packageAgeDays !== undefined ? Math.floor(r.packageAgeDays) + "d" : "?"}</span>
+            <span><b>Ver age:</b> ${r.versionAgeDays !== undefined ? Math.floor(r.versionAgeDays) + "d" : "?"}</span>
+            <span><b>Maintainers:</b> ${r.maintainerCount}</span>
+            <span><b>Publisher:</b> ${escape(r.publisher ?? "?")}</span>
+            <span><b>Downloads/wk:</b> ${r.downloadsLastWeek?.toLocaleString() ?? "?"}</span>
+          </div>
+          ${r.deprecated && r.deprecationMessage ? `<div class="deprecation">⚠ ${escape(r.deprecationMessage)}</div>` : ""}
+          <ul class="reasons">
+            ${r.reasons.map((reason) => `<li>${escape(reason)}</li>`).join("")}
+          </ul>
+        </div>
+      `).join("");
+    return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>NPM Safety Guard — Heuristics</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #c9d1d9; padding: 24px; line-height: 1.6; }
+  h1 { font-size: 1.4rem; color: #f0f6fc; margin-bottom: 4px; }
+  .meta { color: #8b949e; font-size: 0.85rem; margin-bottom: 24px; }
+  .summary { display: flex; gap: 12px; margin-bottom: 28px; flex-wrap: wrap; }
+  .stat { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px 20px; min-width: 140px; text-align: center; }
+  .stat .num { font-size: 2rem; font-weight: 800; }
+  .stat .lbl { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat.danger .num { color: #f85149; }
+  .stat.warn .num { color: #d29922; }
+  .stat.ok .num { color: #3fb950; }
+  .hit { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px 18px; margin-bottom: 12px; }
+  .hit.critical { border-left: 4px solid #f85149; background: #1c0f0f; }
+  .hit.high     { border-left: 4px solid #d29922; background: #1c1600; }
+  .hit.medium   { border-left: 4px solid #388bfd; background: #0d1e40; }
+  .hit.low      { border-left: 4px solid #3fb950; }
+  .hit-header { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .hit-header strong { font-size: 1.05rem; color: #f0f6fc; }
+  code { background: #0d1117; padding: 2px 6px; border-radius: 3px; font-family: 'Cascadia Code', monospace; font-size: 0.85rem; }
+  .score-badge {
+    display: inline-block; min-width: 36px; padding: 4px 8px;
+    font-size: 0.85rem; font-weight: 800; text-align: center;
+    border-radius: 6px; color: #fff;
+  }
+  .score-badge.critical { background: #f85149; }
+  .score-badge.high     { background: #d29922; color: #000; }
+  .score-badge.medium   { background: #388bfd; }
+  .score-badge.low      { background: #3fb950; color: #000; }
+  .chip {
+    background: #21262d; color: #c9d1d9;
+    padding: 2px 8px; border-radius: 99px; font-size: 0.7rem;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .chip.danger { background: #f85149; color: #fff; }
+  .metrics { display: flex; gap: 18px; flex-wrap: wrap; color: #8b949e; font-size: 0.82rem; margin-bottom: 8px; padding: 6px 0; border-top: 1px solid #21262d; border-bottom: 1px solid #21262d; }
+  .metrics b { color: #c9d1d9; font-weight: 600; }
+  .deprecation { background: #1c0f0f; color: #ff7b72; padding: 8px 12px; border-radius: 4px; font-size: 0.85rem; margin: 8px 0; }
+  .reasons { list-style: none; font-size: 0.85rem; color: #c9d1d9; }
+  .reasons li { padding: 3px 0 3px 14px; position: relative; }
+  .reasons li:before { content: "•"; position: absolute; left: 0; color: #8b949e; }
+  .clean { text-align: center; padding: 60px 20px; border: 1px dashed #30363d; border-radius: 12px; color: #3fb950; }
+  .clean .icon { font-size: 3rem; display: block; margin-bottom: 12px; }
+  .clean h2 { font-size: 1.4rem; margin-bottom: 8px; }
+  .clean p { color: #8b949e; }
+  .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #30363d; font-size: 12px; color: #8b949e; text-align: center; }
+  .footer a { color: #388bfd; text-decoration: none; }
+</style></head><body>
+  <h1>📊 Risk Heuristics Report</h1>
+  <p class="meta">${escape(filePath)} · ${now}</p>
+  <div class="summary">
+    <div class="stat ${flagged === 0 ? 'ok' : 'warn'}"><div class="num">${flagged}</div><div class="lbl">Flagged</div></div>
+    <div class="stat ${critical === 0 ? 'ok' : 'danger'}"><div class="num">${critical}</div><div class="lbl">Critical (≥80)</div></div>
+    <div class="stat ${high === 0 ? 'ok' : 'warn'}"><div class="num">${high}</div><div class="lbl">High (≥60)</div></div>
+    <div class="stat ok"><div class="num">${totalDeps}</div><div class="lbl">Analyzed</div></div>
+  </div>
+  ${cardsHtml}
+  <div class="footer">
+    Heuristics scored 0–100 from npm registry metadata: package age, version age,
+    deprecation, maintainer takeover (publisher not in maintainers list),
+    weekly download velocity.
+    <br>Built by <a href="https://sendwavehub.tech">SendWaveHub</a>
+  </div>
+</body></html>`;
 }
 // ─── Lockfile Scanner ─────────────────────────────────────────────────────────
 let lockfilePanel;
