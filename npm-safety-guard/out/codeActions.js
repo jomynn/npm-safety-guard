@@ -18,6 +18,9 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NpmSafetyGuardCodeActionProvider = void 0;
+exports.parseNameVersion = parseNameVersion;
+exports.extractHighestFixVersion = extractHighestFixVersion;
+exports.findVersionRange = findVersionRange;
 const vscode = require("vscode");
 const maliciousDb_1 = require("./maliciousDb");
 const typosquatChecker_1 = require("./typosquatChecker");

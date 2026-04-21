@@ -28,7 +28,7 @@ const NPM_GUARD_SOURCES = new Set([
   "npm-safety-guard(RL)",
 ]);
 
-function parseNameVersion(code: string): { name: string; version: string } | null {
+export function parseNameVersion(code: string): { name: string; version: string } | null {
   // Handles "@scope/name@1.2.3" and "name@1.2.3" plus typosquat form "foo → bar"
   const arrowIdx = code.indexOf(" → ");
   const core = arrowIdx >= 0 ? code.slice(0, arrowIdx) : code;
@@ -37,7 +37,7 @@ function parseNameVersion(code: string): { name: string; version: string } | nul
   return { name: m[1], version: m[2] };
 }
 
-function extractHighestFixVersion(message: string): string | null {
+export function extractHighestFixVersion(message: string): string | null {
   // Messages embed "(fix: 1.15.0)" one or more times. Pick the highest so
   // one bump covers every CVE in the diagnostic.
   const matches = [...message.matchAll(/\(fix:\s*([^)]+)\)/g)].map((m) => m[1].trim());
@@ -57,7 +57,7 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
-function findVersionRange(
+export function findVersionRange(
   doc: vscode.TextDocument,
   line: number,
   packageName: string

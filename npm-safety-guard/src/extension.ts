@@ -8,7 +8,12 @@ import { deepScanAll, clearDeepScanCache, DeepScanResult, DeepScanFinding } from
 import { parseLockfile, LockfileSummary } from "./lockfileScanner";
 import { checkAllHeuristics, clearHeuristicsCache, RegistrySignals } from "./registryHeuristics";
 import { checkAllPackageNames, TyposquatHit } from "./typosquatChecker";
-import { NpmSafetyGuardCodeActionProvider } from "./codeActions";
+import {
+  NpmSafetyGuardCodeActionProvider,
+  extractHighestFixVersion,
+  findVersionRange,
+  parseNameVersion,
+} from "./codeActions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -323,6 +328,25 @@ export function activate(context: vscode.ExtensionContext) {
           `NPM Safety Guard (OSV): Scanned ${uris.length} file(s).`
         );
       }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("npmSafetyGuard.fixAllCVEs", async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || !isPackageJson(editor.document)) {
+        vscode.window.showInformationMessage(
+          "NPM Safety Guard: Open a package.json file to fix CVEs."
+        );
+        return;
+      }
+      await fixAllOSVCVEsInDocument(editor.document);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("npmSafetyGuard.fixAllCVEsInWorkspace", async () => {
+      await fixAllOSVCVEsInWorkspace();
     })
   );
 
@@ -2186,4 +2210,193 @@ function buildScriptHoverMarkdown(hit: ScriptCheckResult): string {
   md += `- If this package is trusted, add \`"${hit.package}"\` to \`npmSafetyGuard.scriptWhitelist\` in settings\n\n`;
   md += `[View on npmjs.com](https://www.npmjs.com/package/${hit.package}/v/${hit.version})`;
   return md;
+}
+
+// ─── Bulk CVE Auto-Fix ────────────────────────────────────────────────────────
+
+interface FixStats {
+  applied: number;
+  skipped: number;
+}
+
+// Appends replacements for every OSV diagnostic in `doc` to `edit`.
+// De-dupes by package name within the file and keeps the highest fix version.
+function collectOSVFixEdits(
+  doc: vscode.TextDocument,
+  diags: readonly vscode.Diagnostic[],
+  edit: vscode.WorkspaceEdit
+): FixStats {
+  const osvDiags = diags.filter((d) => d.source === "npm-safety-guard(OSV)");
+  if (osvDiags.length === 0) return { applied: 0, skipped: 0 };
+
+  const byPackage = new Map<string, { line: number; fix: string }>();
+  let skipped = 0;
+
+  for (const d of osvDiags) {
+    const codeValue =
+      typeof d.code === "object" && d.code !== null
+        ? String((d.code as any).value ?? "")
+        : String(d.code ?? "");
+    const parsed = parseNameVersion(codeValue);
+    if (!parsed) continue;
+    const fix = extractHighestFixVersion(d.message);
+    if (!fix) {
+      skipped++;
+      continue;
+    }
+    const existing = byPackage.get(parsed.name);
+    if (!existing || compareSemver(fix, existing.fix) > 0) {
+      byPackage.set(parsed.name, { line: d.range.start.line, fix });
+    }
+  }
+
+  let applied = 0;
+  for (const [name, { line, fix }] of byPackage) {
+    const verRange = findVersionRange(doc, line, name);
+    if (!verRange) continue;
+    edit.replace(doc.uri, verRange, `^${fix}`);
+    applied++;
+  }
+
+  return { applied, skipped };
+}
+
+async function fixAllOSVCVEsInDocument(doc: vscode.TextDocument): Promise<void> {
+  const diags = diagnosticCollection.get(doc.uri) ?? [];
+  const hasOsv = diags.some((d) => d.source === "npm-safety-guard(OSV)");
+  if (!hasOsv) {
+    vscode.window.showInformationMessage(
+      "NPM Safety Guard: No CVE findings in this file. Run an OSV scan first."
+    );
+    return;
+  }
+
+  const edit = new vscode.WorkspaceEdit();
+  const { applied, skipped } = collectOSVFixEdits(doc, diags, edit);
+
+  if (applied === 0) {
+    vscode.window.showWarningMessage(
+      skipped > 0
+        ? "NPM Safety Guard: No CVE findings had a known fix version."
+        : "NPM Safety Guard: Could not locate version strings for any of the vulnerable packages."
+    );
+    return;
+  }
+
+  const ok = await vscode.workspace.applyEdit(edit);
+  if (!ok) {
+    vscode.window.showErrorMessage("NPM Safety Guard: Failed to apply CVE fixes.");
+    return;
+  }
+
+  await doc.save();
+  await promptPostFix(
+    skipped > 0
+      ? `Pinned ${applied} package(s) to CVE-fix versions. ${skipped} finding(s) had no known fix.`
+      : `Pinned ${applied} package(s) to CVE-fix versions.`,
+    [doc.uri]
+  );
+}
+
+async function fixAllOSVCVEsInWorkspace(): Promise<void> {
+  const targets: vscode.Uri[] = [];
+  diagnosticCollection.forEach((uri, diags) => {
+    if (diags.some((d) => d.source === "npm-safety-guard(OSV)")) {
+      targets.push(uri);
+    }
+  });
+
+  if (targets.length === 0) {
+    vscode.window.showInformationMessage(
+      "NPM Safety Guard: No CVE findings in the workspace. Run an OSV scan first."
+    );
+    return;
+  }
+
+  const edit = new vscode.WorkspaceEdit();
+  const docs: vscode.TextDocument[] = [];
+  let totalApplied = 0;
+  let totalSkipped = 0;
+  let filesChanged = 0;
+
+  for (const uri of targets) {
+    let doc: vscode.TextDocument;
+    try {
+      doc = await vscode.workspace.openTextDocument(uri);
+    } catch {
+      continue;
+    }
+    const fileDiags = diagnosticCollection.get(uri) ?? [];
+    const { applied, skipped } = collectOSVFixEdits(doc, fileDiags, edit);
+    totalApplied += applied;
+    totalSkipped += skipped;
+    if (applied > 0) {
+      filesChanged++;
+      docs.push(doc);
+    }
+  }
+
+  if (totalApplied === 0) {
+    vscode.window.showWarningMessage(
+      "NPM Safety Guard: No CVE findings had a resolvable fix version."
+    );
+    return;
+  }
+
+  const ok = await vscode.workspace.applyEdit(edit);
+  if (!ok) {
+    vscode.window.showErrorMessage("NPM Safety Guard: Failed to apply CVE fixes.");
+    return;
+  }
+
+  await Promise.all(docs.map((d) => d.save()));
+
+  const summary =
+    totalSkipped > 0
+      ? `Pinned ${totalApplied} package(s) across ${filesChanged} file(s). ${totalSkipped} finding(s) had no known fix.`
+      : `Pinned ${totalApplied} package(s) across ${filesChanged} file(s).`;
+
+  await promptPostFix(summary, docs.map((d) => d.uri));
+}
+
+// Offer post-fix actions. `uris` is the list of fixed package.json locations;
+// used to pick the right working directory for `npm install` and to diff a
+// single-file change.
+async function promptPostFix(summary: string, uris: vscode.Uri[]): Promise<void> {
+  const buttons: string[] = ["Run npm install"];
+  if (uris.length === 1) buttons.push("Show diff");
+
+  const choice = await vscode.window.showInformationMessage(summary, ...buttons);
+
+  if (choice === "Run npm install") {
+    // When fixing multiple files, launch one terminal per distinct workspace
+    // folder so each project installs in its own cwd.
+    const cwds = new Set<string>();
+    for (const uri of uris) {
+      const folder = vscode.workspace.getWorkspaceFolder(uri);
+      if (folder) cwds.add(folder.uri.fsPath);
+    }
+    if (cwds.size === 0) cwds.add(process.cwd());
+    for (const cwd of cwds) {
+      const terminal = vscode.window.createTerminal({
+        name: `NPM Safety Guard — ${cwd.split(/[\\/]/).pop()}`,
+        cwd,
+      });
+      terminal.show();
+      terminal.sendText("npm install");
+    }
+  } else if (choice === "Show diff" && uris.length === 1) {
+    await vscode.commands.executeCommand("git.openChange", uris[0]);
+  }
+}
+
+function compareSemver(a: string, b: string): number {
+  const pa = a.split(/[-+]/)[0].split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(/[-+]/)[0].split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const da = pa[i] ?? 0;
+    const db = pb[i] ?? 0;
+    if (da !== db) return da - db;
+  }
+  return 0;
 }

@@ -2,6 +2,24 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.8.7] — 2026-04-21
+
+### Added
+- **Bulk CVE auto-fix.** Two new commands let you clear every OSV CVE finding in one keystroke — previously you had to click the lightbulb on each diagnostic individually, which doesn't scale when `npm audit` finds 30+ CVEs across a monorepo.
+  - `NPM Safety Guard: Fix All CVEs in This File` — pins every vulnerable package in the current `package.json` to its highest known fix version (caret range `^X.Y.Z`).
+  - `NPM Safety Guard: Fix All CVEs in Workspace` — walks every `package.json` with OSV diagnostics in the workspace and applies fixes across all of them in a single atomic edit.
+- **Post-fix prompt** with two actions:
+  - **Run npm install** — spawns one terminal per affected workspace folder with the correct `cwd`, so monorepos install each project in its own directory.
+  - **Show diff** — opens the Git diff view for the changed file (single-file fix only).
+- De-duplication per file: if a package has multiple CVE diagnostics, the highest fix version wins — one bump covers every advisory.
+
+### Changed
+- `parseNameVersion`, `extractHighestFixVersion`, and `findVersionRange` are now exported from `codeActions.ts` for reuse by the bulk fixer. No behavior change for the per-line lightbulb fixes.
+
+### Docs
+- `.github/FUNDING.yml` added — repo now shows a GitHub "Sponsor" button.
+- README gains a Sponsors & Support section with GitHub Sponsors, Open Collective, and Ko-fi links.
+
 ## [1.8.3] — 2026-04-19
 
 ### Fixed
