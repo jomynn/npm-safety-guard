@@ -183,7 +183,10 @@ function activate(context) {
             ...(parsed.peerDependencies || {}),
             ...(parsed.optionalDependencies || {}),
         };
-        const hits = (0, typosquatChecker_1.checkAllPackageNames)(deps);
+        const typosquatWhitelist = vscode.workspace
+            .getConfiguration("npmSafetyGuard")
+            .get("typosquatWhitelist", []);
+        const hits = (0, typosquatChecker_1.checkAllPackageNames)(deps, typosquatWhitelist);
         const ed = editor && editor.document.uri.toString() === doc.uri.toString() ? editor : undefined;
         applyTyposquatDiagnostics(doc, ed, deps);
         if (hits.length === 0) {
@@ -405,7 +408,10 @@ function applyDiagnostics(doc, hits) {
 }
 // ─── Typosquat / Homoglyph diagnostics ────────────────────────────────────────
 function applyTyposquatDiagnostics(doc, editor, deps) {
-    const hits = (0, typosquatChecker_1.checkAllPackageNames)(deps);
+    const typosquatWhitelist = vscode.workspace
+        .getConfiguration("npmSafetyGuard")
+        .get("typosquatWhitelist", []);
+    const hits = (0, typosquatChecker_1.checkAllPackageNames)(deps, typosquatWhitelist);
     const diagnostics = hits.map((hit) => {
         const line = Math.max(0, findLineForPackage(doc, hit.package, hit.version));
         const lineText = doc.lineAt(line).text;

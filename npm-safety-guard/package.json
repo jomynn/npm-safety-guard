@@ -2,7 +2,7 @@
   "name": "npm-safety-guard",
   "displayName": "NPM Safety Guard",
   "description": "Detects malicious npm packages, CVEs, and risky install hooks before installation. Live OSV.dev + supply chain attack DB (Shai-Hulud, Axios/DPRK RAT, Lazarus, event-stream). By SendWaveHub.",
-  "version": "1.8.7",
+  "version": "1.8.8",
   "publisher": "Sendwavehubtech",
   "author": {
     "name": "SendWaveHub",
@@ -145,6 +145,12 @@
           "type": "boolean",
           "default": true,
           "description": "Detect typosquatting (Damerau-Levenshtein vs top-package list) and Cyrillic/Greek homoglyph attacks in package names. Instant, offline, zero network."
+        },
+        "npmSafetyGuard.typosquatWhitelist": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Package names to exclude from typosquat / homoglyph checks. Use this for short-named legitimate packages that are falsely flagged (e.g. \"konva\"). The built-in known-good list already covers the most common cases."
         },
         "npmSafetyGuard.rlToken": {
           "type": "string",

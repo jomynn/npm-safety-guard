@@ -150,6 +150,19 @@ const TOP_PACKAGES_RAW = [
     // sometimes-mistyped tiny libs
     "left-pad", "is-thirteen", "noop", "is-promise", "is-callable",
     "p-limit", "p-map", "p-queue", "p-retry",
+    // Well-known short-named packages — added to prevent false-positive typosquat
+    // alerts (edit distance coincidentally lands near a popular package).
+    "konva", "fabric", "ogl", "regl", "twgl", // canvas / WebGL
+    "pug", "ejs", "nunjucks", "mustache", "handlebars", "hbs", // templates
+    "marked", "remark", "unified", "micromark", // markdown
+    "mitt", "eventemitter3", "emittery", // event emitters
+    "pinia", "valtio", "nanostores", "xstate", "effector", // state
+    "swiper", "flatpickr", "tippy", "popper", // UI widgets
+    "execa", "globby", "zx", "tempy", // node scripting
+    "ofetch", "ufo", "defu", "klona", // unjs utils
+    "ava", "tap", "uvu", // test runners
+    "anime", "velocity", // animation
+    "parcel", "wmr", // bundlers
 ];
 const TOP_PACKAGES = new Set(TOP_PACKAGES_RAW);
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -204,9 +217,12 @@ function checkPackageName(name, version) {
     }
     return null;
 }
-function checkAllPackageNames(deps) {
+function checkAllPackageNames(deps, whitelist = []) {
+    const wlSet = new Set(whitelist.map((s) => s.toLowerCase().trim()));
     const hits = [];
     for (const [name, version] of Object.entries(deps)) {
+        if (wlSet.has(name.toLowerCase()))
+            continue;
         const hit = checkPackageName(name, version);
         if (hit)
             hits.push(hit);

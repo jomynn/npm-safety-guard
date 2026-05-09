@@ -221,7 +221,10 @@ export function activate(context: vscode.ExtensionContext) {
         ...(parsed.peerDependencies as Record<string, string> || {}),
         ...(parsed.optionalDependencies as Record<string, string> || {}),
       };
-      const hits = checkAllPackageNames(deps);
+      const typosquatWhitelist = vscode.workspace
+        .getConfiguration("npmSafetyGuard")
+        .get<string[]>("typosquatWhitelist", []);
+      const hits = checkAllPackageNames(deps, typosquatWhitelist);
       const ed = editor && editor.document.uri.toString() === doc.uri.toString() ? editor : undefined;
       applyTyposquatDiagnostics(doc, ed, deps);
       if (hits.length === 0) {
@@ -526,7 +529,10 @@ function applyTyposquatDiagnostics(
   editor: vscode.TextEditor | undefined,
   deps: Record<string, string>
 ): void {
-  const hits = checkAllPackageNames(deps);
+  const typosquatWhitelist = vscode.workspace
+    .getConfiguration("npmSafetyGuard")
+    .get<string[]>("typosquatWhitelist", []);
+  const hits = checkAllPackageNames(deps, typosquatWhitelist);
 
   const diagnostics: vscode.Diagnostic[] = hits.map((hit) => {
     const line = Math.max(0, findLineForPackage(doc, hit.package, hit.version));

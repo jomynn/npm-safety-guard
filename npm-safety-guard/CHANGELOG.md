@@ -2,6 +2,14 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.8.8] — 2026-05-09
+
+### Fixed
+- **Typosquat false positives on well-known short-named packages.** Packages like `konva` (HTML5 Canvas), `pug`, `ejs`, `mitt`, `pinia`, `swiper`, `execa`, and ~25 others were incorrectly flagged because their short names happen to land within edit-distance 2 of a popular package (e.g. `konva` → `koa`). All have been added to the built-in known-good list and are now silenced automatically.
+
+### Added
+- **`npmSafetyGuard.typosquatWhitelist`** — new setting (string array, default `[]`). Add any package name here to permanently suppress its typosquat / homoglyph warning. Useful for internal or niche packages not covered by the built-in list. Works identically to `scriptWhitelist`.
+
 ## [1.8.7] — 2026-04-21
 
 ### Added
