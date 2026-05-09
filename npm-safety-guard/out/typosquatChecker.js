@@ -165,6 +165,14 @@ const TOP_PACKAGES_RAW = [
     "parcel", "wmr", // bundlers
 ];
 const TOP_PACKAGES = new Set(TOP_PACKAGES_RAW);
+// ─── JS/TS suffix normalisation ──────────────────────────────────────────────
+function stripJsSuffix(name) {
+    return name
+        .replace(/[.-]js$/i, "")
+        .replace(/^js[.-]/, "")
+        .replace(/[.-]ts$/i, "")
+        .replace(/^ts[.-]/, "");
+}
 // ─── Public API ──────────────────────────────────────────────────────────────
 function checkPackageName(name, version) {
     // 1. Homoglyph / non-ASCII check (highest signal)
@@ -188,21 +196,32 @@ function checkPackageName(name, version) {
     // 2. Exact match in top list — known-popular, not a typosquat
     if (TOP_PACKAGES.has(name))
         return null;
-    // 3. Damerau-Levenshtein against top list (with length pre-filter)
+    // 2b. Strip common JS/TS suffixes/prefixes — "expressjs", "vue-js", "ts-node"
+    //     are wrappers/variants of the original package, not squats.
+    const stripped = stripJsSuffix(name);
+    if (stripped !== name && TOP_PACKAGES.has(stripped))
+        return null;
+    // 3. Damerau-Levenshtein against top list. Gate on *relative* edit distance
+    //    (distance / max(len_a, len_b) ≤ 0.30) so short-named legitimate packages
+    //    are not flagged by coincidental absolute proximity (e.g. konva → koa).
     let closest = "";
     let minDist = Infinity;
     for (const top of TOP_PACKAGES) {
-        if (Math.abs(top.length - name.length) > 2)
+        const maxLen = Math.max(top.length, name.length);
+        if (Math.abs(top.length - name.length) > Math.ceil(maxLen * 0.35))
             continue;
         const d = damerauLevenshtein(name, top);
         if (d < minDist) {
             minDist = d;
             closest = top;
             if (d === 1)
-                break; // can't beat 1 from a non-equal candidate
+                break;
         }
     }
-    if (minDist <= 2 && minDist > 0 && closest) {
+    if (minDist > 0 && closest) {
+        const relDist = minDist / Math.max(name.length, closest.length);
+        if (relDist > 0.30)
+            return null;
         // Skip scoped pairs that legitimately match unscoped popular packages,
         // e.g. "@types/lodash" vs "lodash" (hits via length/distance noise).
         if (name.startsWith("@") && !closest.startsWith("@"))
@@ -212,7 +231,7 @@ function checkPackageName(name, version) {
             reason: "typosquat",
             closestMatch: closest,
             distance: minDist,
-            note: `Name is ${minDist} edit(s) away from the popular package "${closest}". Verify you didn't fat-finger the install command.`,
+            note: `Name is ${minDist} edit(s) away from the popular package "${closest}" (${Math.round(relDist * 100)}% different). Verify you didn't fat-finger the install command.`,
         };
     }
     return null;

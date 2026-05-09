@@ -124,6 +124,7 @@ class NpmSafetyGuardCodeActionProvider {
                 if (hit?.closestMatch) {
                     actions.push(this.createReplaceNameAction(doc, line, name, hit.closestMatch, diag));
                 }
+                actions.push(this.createTyposquatWhitelistAction(name, diag));
             }
             // 🟡 Install script
             if (diag.source === "npm-safety-guard(scripts)") {
@@ -173,6 +174,16 @@ class NpmSafetyGuardCodeActionProvider {
         action.command = {
             title: "Add to whitelist",
             command: "npmSafetyGuard.addToScriptWhitelist",
+            arguments: [name],
+        };
+        action.diagnostics = [diag];
+        return action;
+    }
+    createTyposquatWhitelistAction(name, diag) {
+        const action = new vscode.CodeAction(`➕ Add "${name}" to typosquat whitelist (false positive)`, vscode.CodeActionKind.QuickFix);
+        action.command = {
+            title: "Add to typosquat whitelist",
+            command: "npmSafetyGuard.addToTyposquatWhitelist",
             arguments: [name],
         };
         action.diagnostics = [diag];

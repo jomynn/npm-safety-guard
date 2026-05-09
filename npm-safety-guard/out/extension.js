@@ -50,6 +50,27 @@ function activate(context) {
             void scanInstallScripts(editor.document, editor, { silent: true });
         }
     }));
+    // Command invoked by the "Add to typosquat whitelist" quick-fix
+    context.subscriptions.push(vscode.commands.registerCommand("npmSafetyGuard.addToTyposquatWhitelist", async (name) => {
+        if (!name)
+            return;
+        const cfg = vscode.workspace.getConfiguration("npmSafetyGuard");
+        const current = cfg.get("typosquatWhitelist", []);
+        if (current.includes(name)) {
+            vscode.window.showInformationMessage(`"${name}" is already in the typosquat whitelist.`);
+            return;
+        }
+        const next = [...current, name].sort();
+        const target = vscode.workspace.workspaceFolders?.length
+            ? vscode.ConfigurationTarget.Workspace
+            : vscode.ConfigurationTarget.Global;
+        await cfg.update("typosquatWhitelist", next, target);
+        vscode.window.showInformationMessage(`Added "${name}" to typosquat whitelist (${target === vscode.ConfigurationTarget.Workspace ? "workspace" : "user"} settings). Rescanning…`);
+        const editor = vscode.window.activeTextEditor;
+        if (editor && isPackageJson(editor.document)) {
+            void vscode.commands.executeCommand("npmSafetyGuard.scanNow");
+        }
+    }));
     // Diagnostic collection (Problems panel)
     diagnosticCollection = vscode.languages.createDiagnosticCollection("npm-safety-guard");
     context.subscriptions.push(diagnosticCollection);
@@ -464,7 +485,7 @@ function buildTyposquatHoverMarkdown(hit) {
     md += `${hit.note}\n\n`;
     if (hit.closestMatch) {
         md += `**Quick fix:**\n\`\`\`bash\nnpm uninstall ${hit.package}\nnpm install ${hit.closestMatch}\n\`\`\`\n\n`;
-        md += `[View "${hit.closestMatch}" on npmjs.com](https://www.npmjs.com/package/${hit.closestMatch})`;
+        md += `[View "${hit.closestMatch}" on npmjs.com](https://www.npmjs.com/package/${encodeURIComponent(hit.closestMatch)}) · [Verify "${hit.package}" on npmjs.com](https://www.npmjs.com/package/${encodeURIComponent(hit.package)})`;
     }
     else {
         md += `[View "${hit.package}" on npmjs.com](https://www.npmjs.com/package/${encodeURIComponent(hit.package)})`;

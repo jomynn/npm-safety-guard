@@ -2,6 +2,16 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.8.9] — 2026-05-09
+
+### Fixed
+- **Relative edit-distance threshold** — the typosquat detector now gates on `distance / max(nameLen, targetLen) ≤ 30%` instead of the previous absolute `≤ 2 edits`. Short-named packages that happened to be within 2 edits of a popular package by coincidence (e.g. `konva → koa`: 2 edits but 40% different) are no longer flagged. True typosquats like `axioss → axios` (1 edit, 17%) still trigger correctly.
+- **JS/TS suffix stripping** — packages that are legitimate wrappers or typed variants of a popular package (e.g. `expressjs`, `vue-js`, `ts-node`) are now silenced automatically before the DL comparison. The suffix/prefix patterns stripped: `-js`, `.js`, `js-`, `js.`, `-ts`, `.ts`, `ts-`, `ts.`.
+
+### Added
+- **"Add to typosquat whitelist" lightbulb action** — every typosquat warning now shows a one-click `➕ Add "<name>" to typosquat whitelist (false positive)` code action. Clicking it writes to your workspace (or user) `settings.json` and immediately rescans — no manual settings editing required.
+- **"Verify on npmjs" link in hover card** — the typosquat hover now shows two links side by side: `View "<closest>" on npmjs.com · Verify "<flagged>" on npmjs.com`. Previously only the closest-match package was linked; the flagged package itself had no direct link, making it awkward to verify a false positive.
+
 ## [1.8.8] — 2026-05-09
 
 ### Fixed
