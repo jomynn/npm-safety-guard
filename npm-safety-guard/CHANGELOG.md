@@ -2,6 +2,11 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.8.10] — 2026-05-09
+
+### Docs
+- Marketplace listing (README) updated to document all features shipped in v1.8.7–v1.8.9: Fix All CVEs commands, `typosquatWhitelist` setting, relative edit-distance typosquat logic, JS/TS suffix stripping, one-click whitelist lightbulb, and sponsor links.
+
 ## [1.8.9] — 2026-05-09
 
 ### Fixed
