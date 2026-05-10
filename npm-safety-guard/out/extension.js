@@ -708,7 +708,7 @@ function buildReportHtml(findings, scanned) {
             <div class="finding-header">
               <code class="pkg-tag">${escape(pkg || "unknown")}</code>
               <span class="finding-file">${escape(fileLabel)}</span>
-              ${first.advisoryUrl ? `<a class="adv-link" href="${escape(first.advisoryUrl)}">advisory →</a>` : ""}
+              ${first.advisoryUrl ? `<a class="adv-link" href="${escape(first.advisoryUrl)}">${first.advisoryUrl.includes("npmjs.com") ? "npmjs →" : "advisory →"}</a>` : ""}
             </div>
             ${messages}
             ${more}

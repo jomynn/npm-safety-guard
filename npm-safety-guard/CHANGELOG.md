@@ -2,6 +2,13 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.8.11] — 2026-05-10
+
+### Fixed
+- **Scope-aware typosquat comparison.** When two packages share the same scope prefix (e.g. `@types/`), the common prefix was compressing edit distance artificially — `@types/qrcode` appeared only 3 edits from `@types/node` even though `qrcode` and `node` are unrelated words. The detector now re-evaluates using the post-scope local names with the same 30% relative threshold. `@types/qrcode → @types/node` and `@types/react-dom → @types/react` are no longer flagged; real same-scope typosquats like `@types/raect` still are.
+- **Top `@types/*` packages added to built-in safe list.** `@types/react-dom`, `@types/react-native`, `@types/lodash`, `@types/jest`, `@types/mocha`, `@types/chai`, and ~15 more DefinitelyTyped packages are now in the known-good list, bypassing DL comparison entirely.
+- **Security Report "advisory →" link label.** Links to npmjs.com now show `npmjs →` instead of the generic `advisory →`, making it clear what clicking the link does.
+
 ## [1.8.10] — 2026-05-09
 
 ### Docs

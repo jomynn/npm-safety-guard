@@ -136,6 +136,18 @@ const TOP_PACKAGES_RAW = [
   "nyc", "c8", "istanbul",
   // Linters / types
   "eslint", "prettier", "typescript", "@types/node", "@types/react", "@types/express",
+  // Top @types/* packages — listed explicitly so the exact-match check fires
+  // before DL comparison runs; prevents false positives from other @types/*
+  // packages being within edit distance of these by coincidence.
+  "@types/react-dom", "@types/react-native", "@types/lodash",
+  "@types/jest", "@types/mocha", "@types/chai", "@types/sinon",
+  "@types/webpack", "@types/babel__core", "@types/jquery",
+  "@types/body-parser", "@types/cors", "@types/multer",
+  "@types/passport", "@types/bcrypt", "@types/jsonwebtoken",
+  "@types/uuid", "@types/ms", "@types/debug", "@types/semver",
+  "@types/glob", "@types/fs-extra", "@types/yargs", "@types/minimist",
+  "@types/helmet", "@types/morgan", "@types/compression",
+  "@types/cookie-parser", "@types/ws", "@types/supertest",
   // Database / ORM
   "mongoose", "mongodb", "mysql", "mysql2", "pg", "sqlite3", "better-sqlite3",
   "redis", "ioredis", "sequelize", "knex", "prisma", "@prisma/client", "typeorm",
@@ -182,6 +194,15 @@ const TOP_PACKAGES_RAW = [
 ];
 
 const TOP_PACKAGES = new Set(TOP_PACKAGES_RAW);
+
+// ─── Scope helpers ───────────────────────────────────────────────────────────
+
+function extractScope(name: string): { scope: string; local: string } | null {
+  if (!name.startsWith("@")) return null;
+  const slash = name.indexOf("/");
+  if (slash < 0) return null;
+  return { scope: name.slice(0, slash), local: name.slice(slash + 1) };
+}
 
 // ─── JS/TS suffix normalisation ──────────────────────────────────────────────
 
@@ -242,8 +263,21 @@ export function checkPackageName(name: string, version: string): TyposquatHit | 
   if (minDist > 0 && closest) {
     const relDist = minDist / Math.max(name.length, closest.length);
     if (relDist > 0.30) return null;
-    // Skip scoped pairs that legitimately match unscoped popular packages,
-    // e.g. "@types/lodash" vs "lodash" (hits via length/distance noise).
+
+    // Scope-aware: when both packages share the same @scope/ prefix the common
+    // prefix compresses edit distance artificially (e.g. @types/qrcode is only
+    // 3 edits from @types/node because "@types/" is free). Re-evaluate using
+    // only the post-scope local names with the same 30% threshold.
+    const nameScope = extractScope(name);
+    const closestScope = extractScope(closest);
+    if (nameScope && closestScope && nameScope.scope === closestScope.scope) {
+      const localDist = damerauLevenshtein(nameScope.local, closestScope.local);
+      const localRel = localDist / Math.max(nameScope.local.length, closestScope.local.length);
+      if (localRel > 0.30) return null;
+    }
+
+    // Skip scoped packages that only match an unscoped popular package via
+    // length/distance noise, e.g. "@types/lodash" vs "lodash".
     if (name.startsWith("@") && !closest.startsWith("@")) return null;
     return {
       package: name, version,
