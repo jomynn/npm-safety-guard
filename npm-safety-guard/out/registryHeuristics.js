@@ -121,6 +121,21 @@ function scoreRisk(s) {
             reasons.push(`${s.downloadsLastWeek} downloads/week (low adoption)`);
         }
     }
+    if (s.unpackedSizeKB !== undefined) {
+        const mb = s.unpackedSizeKB / 1024;
+        if (mb > 50) {
+            score += 30;
+            reasons.push(`Unusually large package: ${mb.toFixed(0)} MB unpacked — possible payload or bundled binary`);
+        }
+        else if (mb > 10) {
+            score += 15;
+            reasons.push(`Large package: ${mb.toFixed(0)} MB unpacked`);
+        }
+        else if (mb > 5) {
+            score += 8;
+            reasons.push(`Package is ${mb.toFixed(1)} MB unpacked — above typical size`);
+        }
+    }
     score = Math.min(100, score);
     const level = score >= 80 ? "critical"
         : score >= 60 ? "high"
@@ -190,6 +205,8 @@ async function checkRegistryHeuristics(name, version) {
     const downloadsLastWeek = downloads && typeof downloads.downloads === "number"
         ? downloads.downloads
         : undefined;
+    const rawSize = versionMeta?.dist?.unpackedSize;
+    const unpackedSizeKB = typeof rawSize === "number" && rawSize > 0 ? rawSize / 1024 : undefined;
     const partial = {
         package: name,
         version: ver,
@@ -206,6 +223,7 @@ async function checkRegistryHeuristics(name, version) {
         deprecated,
         deprecationMessage: deprecated ? versionMeta.deprecated : undefined,
         downloadsLastWeek,
+        unpackedSizeKB,
     };
     const { riskScore, riskLevel, reasons } = scoreRisk(partial);
     const full = {

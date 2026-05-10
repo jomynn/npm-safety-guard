@@ -38,6 +38,7 @@ export interface RegistrySignals {
   deprecated: boolean;
   deprecationMessage?: string;
   downloadsLastWeek?: number;
+  unpackedSizeKB?: number;     // unpacked tarball size in KB (from dist.unpackedSize)
   riskScore: number;           // 0–100
   riskLevel: "low" | "medium" | "high" | "critical";
   reasons: string[];
@@ -140,6 +141,13 @@ function scoreRisk(s: Partial<RegistrySignals>): { riskScore: number; riskLevel:
     else if (s.downloadsLastWeek < 1000) { score += 8; reasons.push(`${s.downloadsLastWeek} downloads/week (low adoption)`); }
   }
 
+  if (s.unpackedSizeKB !== undefined) {
+    const mb = s.unpackedSizeKB / 1024;
+    if (mb > 50) { score += 30; reasons.push(`Unusually large package: ${mb.toFixed(0)} MB unpacked — possible payload or bundled binary`); }
+    else if (mb > 10) { score += 15; reasons.push(`Large package: ${mb.toFixed(0)} MB unpacked`); }
+    else if (mb > 5) { score += 8; reasons.push(`Package is ${mb.toFixed(1)} MB unpacked — above typical size`); }
+  }
+
   score = Math.min(100, score);
   const level: RegistrySignals["riskLevel"] =
     score >= 80 ? "critical"
@@ -227,6 +235,10 @@ export async function checkRegistryHeuristics(
       ? (downloads as any).downloads
       : undefined;
 
+  const rawSize: number | undefined = versionMeta?.dist?.unpackedSize;
+  const unpackedSizeKB: number | undefined =
+    typeof rawSize === "number" && rawSize > 0 ? rawSize / 1024 : undefined;
+
   const partial: Partial<RegistrySignals> = {
     package: name,
     version: ver,
@@ -243,6 +255,7 @@ export async function checkRegistryHeuristics(
     deprecated,
     deprecationMessage: deprecated ? versionMeta.deprecated : undefined,
     downloadsLastWeek,
+    unpackedSizeKB,
   };
 
   const { riskScore, riskLevel, reasons } = scoreRisk(partial);

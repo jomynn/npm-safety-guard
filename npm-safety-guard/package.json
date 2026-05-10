@@ -2,7 +2,7 @@
   "name": "npm-safety-guard",
   "displayName": "NPM Safety Guard",
   "description": "Detects malicious npm packages, CVEs, and risky install hooks before installation. Live OSV.dev + supply chain attack DB (Shai-Hulud, Axios/DPRK RAT, Lazarus, event-stream). By SendWaveHub.",
-  "version": "1.8.11",
+  "version": "1.9.0",
   "publisher": "Sendwavehubtech",
   "author": {
     "name": "SendWaveHub",
@@ -37,7 +37,16 @@
     "security",
     "supply chain",
     "malware",
-    "axios"
+    "axios",
+    "vulnerability",
+    "cve",
+    "audit",
+    "safe",
+    "typosquat",
+    "dependency confusion",
+    "open-vsx",
+    "vscodium",
+    "antigravity"
   ],
   "activationEvents": [
     "onLanguage:json",
@@ -93,6 +102,10 @@
       {
         "command": "npmSafetyGuard.checkTyposquat",
         "title": "NPM Safety Guard: Check Typosquats / Homoglyphs (package names)"
+      },
+      {
+        "command": "npmSafetyGuard.checkConfusion",
+        "title": "NPM Safety Guard: Check Dependency Confusion (scoped packages on public npm)"
       }
     ],
     "configuration": {
@@ -152,6 +165,16 @@
           "default": [],
           "description": "Package names to exclude from typosquat / homoglyph checks. Use this for short-named legitimate packages that are falsely flagged (e.g. \"konva\"). The built-in known-good list already covers the most common cases."
         },
+        "npmSafetyGuard.enableConfusionCheck": {
+          "type": "boolean",
+          "default": true,
+          "description": "Detect dependency confusion attacks: checks each scoped package (@scope/name) against the public npm registry and flags version-inflation attacks (public latest is many majors ahead of pinned) or freshly planted clones (new package, near-zero downloads)."
+        },
+        "npmSafetyGuard.enableOverridesCheck": {
+          "type": "boolean",
+          "default": true,
+          "description": "Scan the overrides / resolutions / pnpm.overrides block for CVE-vulnerable pinned versions via OSV.dev. A common blind spot: teams pin versions to remediate a transitive CVE but inadvertently pin to a version that is itself vulnerable."
+        },
         "npmSafetyGuard.rlToken": {
           "type": "string",
           "default": "",
@@ -163,11 +186,16 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "vscode:prepublish": "npm run compile"
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package",
+    "publish": "vsce publish",
+    "ovsx:publish": "ovsx publish"
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0",
     "@types/node": "^20.0.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^3.0.0",
+    "ovsx": "^0.9.0"
   }
 }

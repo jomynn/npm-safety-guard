@@ -1,13 +1,14 @@
 import * as vscode from "vscode";
 import { checkDependencies, MaliciousEntry, setRemoteEntries } from "./maliciousDb";
 import { checkAllPackagesRL, clearRLCache, RLResult } from "./rlChecker";
-import { checkAllPackagesOSV, clearOSVCache, OSVResult } from "./osvChecker";
+import { checkPackageOSV, checkAllPackagesOSV, clearOSVCache, OSVResult } from "./osvChecker";
 import { fetchRemoteEntries, DEFAULT_DB_URL } from "./remoteDb";
 import { checkAllInstallScripts, clearScriptCache, isPrepareOnly, ScriptCheckResult } from "./installScriptChecker";
 import { deepScanAll, clearDeepScanCache, DeepScanResult, DeepScanFinding } from "./deepScanner";
 import { parseLockfile, LockfileSummary } from "./lockfileScanner";
 import { checkAllHeuristics, clearHeuristicsCache, RegistrySignals } from "./registryHeuristics";
 import { checkAllPackageNames, TyposquatHit } from "./typosquatChecker";
+import { checkAllDependencyConfusion, clearConfusionCache, ConfusionResult } from "./dependencyConfusionChecker";
 import {
   NpmSafetyGuardCodeActionProvider,
   extractHighestFixVersion,
@@ -263,6 +264,25 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("npmSafetyGuard.checkConfusion", async () => {
+      clearConfusionCache();
+      const editor = vscode.window.activeTextEditor;
+      let doc: vscode.TextDocument | undefined;
+      if (editor && isPackageJson(editor.document)) {
+        doc = editor.document;
+      } else {
+        const uris = await vscode.workspace.findFiles("**/package.json", "**/node_modules/**", 1);
+        if (uris.length > 0) doc = await vscode.workspace.openTextDocument(uris[0]);
+      }
+      if (!doc) {
+        vscode.window.showInformationMessage("NPM Safety Guard: No package.json found.");
+        return;
+      }
+      await scanConfusion(doc, editor && editor.document.uri.toString() === doc.uri.toString() ? editor : undefined);
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand("npmSafetyGuard.checkHeuristics", async () => {
       clearHeuristicsCache();
       const editor = vscode.window.activeTextEditor;
@@ -497,6 +517,16 @@ function scanDocument(doc: vscode.TextDocument, editor?: vscode.TextEditor) {
     void scanInstallScripts(doc, editor, { silent: true });
   }
 
+  // Fire-and-forget dependency confusion check (scoped packages vs public npm)
+  if (vscode.workspace.getConfiguration("npmSafetyGuard").get<boolean>("enableConfusionCheck", true)) {
+    void scanConfusion(doc, editor, { silent: true });
+  }
+
+  // Fire-and-forget overrides/resolutions poisoning check
+  if (vscode.workspace.getConfiguration("npmSafetyGuard").get<boolean>("enableOverridesCheck", true)) {
+    void scanOverridesForCVEs(doc, editor, { silent: true });
+  }
+
   // Show notification for critical findings
   if (hits.length > 0) {
     const criticals = hits.filter(h => h.entry.severity === "critical");
@@ -671,35 +701,39 @@ function updateStatusBar(_hitCount?: number, _uri?: vscode.Uri) {
   // Aggregate every diagnostic from every NPM Safety Guard layer across the
   // whole workspace — not just the current file — so the shield reflects the
   // full security posture, not whatever happened in the last-scanned file.
-  let malware = 0, cve = 0, scripts = 0, typosquat = 0, rl = 0;
+  let malware = 0, cve = 0, scripts = 0, typosquat = 0, rl = 0, confusion = 0, overrides = 0;
   let files = 0;
   diagnosticCollection.forEach((_uri, diags) => {
     if (diags.length > 0) files++;
     for (const d of diags) {
       switch (d.source) {
-        case "npm-safety-guard":           malware++;   break;
-        case "npm-safety-guard(OSV)":      cve++;       break;
-        case "npm-safety-guard(scripts)":  scripts++;   break;
-        case "npm-safety-guard(typosquat)":typosquat++; break;
-        case "npm-safety-guard(RL)":       rl++;        break;
+        case "npm-safety-guard":              malware++;   break;
+        case "npm-safety-guard(OSV)":         cve++;       break;
+        case "npm-safety-guard(scripts)":     scripts++;   break;
+        case "npm-safety-guard(typosquat)":   typosquat++; break;
+        case "npm-safety-guard(RL)":          rl++;        break;
+        case "npm-safety-guard(confusion)":   confusion++; break;
+        case "npm-safety-guard(overrides)":   overrides++; break;
       }
     }
   });
 
-  const total = malware + cve + scripts + typosquat + rl;
+  const total = malware + cve + scripts + typosquat + rl + confusion + overrides;
 
   if (total === 0) {
     statusBarItem.text = "$(shield) NPM Safe";
     statusBarItem.backgroundColor = undefined;
-  } else if (malware > 0 || typosquat > 0) {
-    // Red background — malware / homoglyphs are unambiguous attacks
-    statusBarItem.text = `$(warning) ${malware + typosquat} THREAT${malware + typosquat > 1 ? "S" : ""}${cve || scripts ? ` +${cve + scripts} more` : ""}`;
+  } else if (malware > 0 || typosquat > 0 || confusion > 0) {
+    // Red background — malware / homoglyphs / confusion are unambiguous attacks
+    const threats = malware + typosquat + confusion;
+    statusBarItem.text = `$(warning) ${threats} THREAT${threats > 1 ? "S" : ""}${cve || scripts || overrides ? ` +${cve + scripts + overrides} more` : ""}`;
     statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
   } else {
     // Yellow background — CVEs / script warnings — no confirmed malware
     const parts: string[] = [];
     if (cve > 0) parts.push(`${cve} CVE${cve > 1 ? "s" : ""}`);
     if (scripts > 0) parts.push(`${scripts} hook${scripts > 1 ? "s" : ""}`);
+    if (overrides > 0) parts.push(`${overrides} override${overrides > 1 ? "s" : ""}`);
     if (rl > 0) parts.push(`${rl} RL`);
     statusBarItem.text = `$(alert) ${parts.join(" · ")}`;
     statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
@@ -707,11 +741,13 @@ function updateStatusBar(_hitCount?: number, _uri?: vscode.Uri) {
 
   statusBarItem.tooltip =
     `NPM Safety Guard — findings across ${files} file(s)\n\n` +
-    `🔴 Malware:      ${malware}\n` +
-    `🔵 CVE (OSV):    ${cve}\n` +
-    `🟣 Typosquat:    ${typosquat}\n` +
-    `🟡 Install hook: ${scripts}\n` +
-    `🟠 RL premium:   ${rl}\n\n` +
+    `🔴 Malware:          ${malware}\n` +
+    `🔵 CVE (OSV):        ${cve}\n` +
+    `🟣 Typosquat:        ${typosquat}\n` +
+    `🟡 Install hook:     ${scripts}\n` +
+    `🟠 RL premium:       ${rl}\n` +
+    `🔶 Dep confusion:    ${confusion}\n` +
+    `🔷 Overrides CVE:    ${overrides}\n\n` +
     `Click for Security Report.`;
   statusBarItem.show();
 }
@@ -721,7 +757,7 @@ function updateStatusBar(_hitCount?: number, _uri?: vscode.Uri) {
 let reportPanel: vscode.WebviewPanel | undefined;
 
 interface ReportFinding {
-  layer: "malware" | "cve" | "scripts" | "typosquat" | "rl";
+  layer: "malware" | "cve" | "scripts" | "typosquat" | "rl" | "confusion" | "overrides";
   severity: vscode.DiagnosticSeverity;
   package: string;   // e.g. "axios@1.7.0" — parsed from diagnostic.code.value
   message: string;
@@ -737,6 +773,8 @@ function categoriseSource(source: string | undefined): ReportFinding["layer"] | 
   if (source === "npm-safety-guard(scripts)") return "scripts";
   if (source === "npm-safety-guard(typosquat)") return "typosquat";
   if (source === "npm-safety-guard(RL)") return "rl";
+  if (source === "npm-safety-guard(confusion)") return "confusion";
+  if (source === "npm-safety-guard(overrides)") return "overrides";
   return null;
 }
 
@@ -765,9 +803,12 @@ async function showWebviewReport(context: vscode.ExtensionContext) {
           // Sync layers
           scanDocument(doc);
           // Async layers — AWAIT so diagnostics land before we aggregate
+          const cfg2 = vscode.workspace.getConfiguration("npmSafetyGuard");
           const awaiters: Promise<void>[] = [];
           if (osvEnabled) awaiters.push(scanWithOSV(doc, undefined, { silent: true }));
           if (scriptsEnabled) awaiters.push(scanInstallScripts(doc, undefined, { silent: true }));
+          if (cfg2.get<boolean>("enableConfusionCheck", true)) awaiters.push(scanConfusion(doc, undefined, { silent: true }));
+          if (cfg2.get<boolean>("enableOverridesCheck", true)) awaiters.push(scanOverridesForCVEs(doc, undefined, { silent: true }));
           await Promise.all(awaiters);
         } catch { /* skip malformed file */ }
       }
@@ -825,16 +866,20 @@ function buildReportHtml(
     scripts: findings.filter((f) => f.layer === "scripts"),
     typosquat: findings.filter((f) => f.layer === "typosquat"),
     rl: findings.filter((f) => f.layer === "rl"),
+    confusion: findings.filter((f) => f.layer === "confusion"),
+    overrides: findings.filter((f) => f.layer === "overrides"),
   };
   const criticals = findings.filter((f) => f.severity === vscode.DiagnosticSeverity.Error).length;
   const now = new Date().toLocaleString();
 
   const LAYER_META: Record<ReportFinding["layer"], { title: string; icon: string; color: string }> = {
-    malware:   { title: "Known Malicious Packages",  icon: "🔴", color: "critical" },
-    cve:       { title: "CVE Vulnerabilities (OSV)", icon: "🔵", color: "high" },
-    scripts:   { title: "Install Script Hooks",      icon: "🟡", color: "medium" },
-    typosquat: { title: "Typosquat / Homoglyph",     icon: "🟣", color: "high" },
-    rl:        { title: "ReversingLabs Findings",    icon: "🟠", color: "high" },
+    malware:   { title: "Known Malicious Packages",    icon: "🔴", color: "critical" },
+    cve:       { title: "CVE Vulnerabilities (OSV)",   icon: "🔵", color: "high" },
+    scripts:   { title: "Install Script Hooks",        icon: "🟡", color: "medium" },
+    typosquat: { title: "Typosquat / Homoglyph",       icon: "🟣", color: "high" },
+    rl:        { title: "ReversingLabs Findings",      icon: "🟠", color: "high" },
+    confusion: { title: "Dependency Confusion",        icon: "🔶", color: "critical" },
+    overrides: { title: "Overrides / Resolutions CVE", icon: "🔷", color: "high" },
   };
 
   // Group findings inside each layer by package to reduce clutter
@@ -880,7 +925,7 @@ function buildReportHtml(
 
   const resultsHtml = findings.length === 0
     ? `<div class="clean"><span class="icon">✅</span><h2>All Clear</h2><p>No findings from any detection layer in ${scanned} scanned file(s).</p></div>`
-    : (["malware", "cve", "typosquat", "scripts", "rl"] as const).map(renderLayer).join("");
+    : (["malware", "confusion", "cve", "overrides", "typosquat", "scripts", "rl"] as const).map(renderLayer).join("");
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1009,6 +1054,14 @@ function buildReportHtml(
     <div class="stat ${byLayer.scripts.length === 0 ? 'ok' : 'warn'}">
       <div class="num">${byLayer.scripts.length}</div>
       <div class="lbl">Install Hooks</div>
+    </div>
+    <div class="stat ${byLayer.confusion.length === 0 ? 'ok' : 'danger'}">
+      <div class="num">${byLayer.confusion.length}</div>
+      <div class="lbl">Dep Confusion</div>
+    </div>
+    <div class="stat ${byLayer.overrides.length === 0 ? 'ok' : 'warn'}">
+      <div class="num">${byLayer.overrides.length}</div>
+      <div class="lbl">Override CVEs</div>
     </div>
     <div class="stat ok">
       <div class="num">${scanned}</div>
@@ -1465,6 +1518,176 @@ async function scanInstallScripts(
         }
       });
     }
+  }
+}
+
+// ─── Dependency Confusion Scanner ────────────────────────────────────────────
+
+async function scanConfusion(
+  doc: vscode.TextDocument,
+  editor?: vscode.TextEditor,
+  opts: { silent?: boolean } = {}
+): Promise<void> {
+  if (!isPackageJson(doc)) return;
+
+  let parsed: Record<string, unknown>;
+  try { parsed = JSON.parse(doc.getText()); }
+  catch { return; }
+
+  const allDeps: Record<string, string> = {
+    ...(parsed.dependencies as Record<string, string> || {}),
+    ...(parsed.devDependencies as Record<string, string> || {}),
+    ...(parsed.peerDependencies as Record<string, string> || {}),
+    ...(parsed.optionalDependencies as Record<string, string> || {}),
+  };
+
+  const hits = await checkAllDependencyConfusion(allDeps);
+
+  const diags: vscode.Diagnostic[] = hits.map((hit) => {
+    const line = Math.max(0, findLineForPackage(doc, hit.package, hit.version));
+    const lineText = doc.lineAt(line).text;
+    const range = new vscode.Range(line, 0, line, lineText.length);
+    const severity =
+      hit.riskLevel === "critical"
+        ? vscode.DiagnosticSeverity.Error
+        : vscode.DiagnosticSeverity.Warning;
+    const d = new vscode.Diagnostic(
+      range,
+      `[NPM Safety Guard / Confusion] ${hit.package} (public: ${hit.publicLatest})\n${hit.reason}`,
+      severity
+    );
+    d.source = "npm-safety-guard(confusion)";
+    d.code = {
+      value: `${hit.package}@${hit.version}`,
+      target: vscode.Uri.parse(`https://www.npmjs.com/package/${encodeURIComponent(hit.package)}`),
+    };
+    return d;
+  });
+
+  const existing = diagnosticCollection.get(doc.uri) ?? [];
+  const nonConfusion = existing.filter((d) => d.source !== "npm-safety-guard(confusion)");
+  diagnosticCollection.set(doc.uri, [...nonConfusion, ...diags]);
+  updateStatusBar();
+
+  if (!opts.silent) {
+    if (hits.length === 0) {
+      vscode.window.showInformationMessage(
+        "NPM Safety Guard (Confusion): No dependency confusion signals detected."
+      );
+    } else {
+      vscode.window.showWarningMessage(
+        `NPM Safety Guard (Confusion): ${hits.length} potential dependency confusion package(s).`,
+        "View Report"
+      ).then((choice) => {
+        if (choice === "View Report") {
+          vscode.commands.executeCommand("npmSafetyGuard.showReport");
+        }
+      });
+    }
+  }
+}
+
+// ─── Overrides / Resolutions Poisoning Scanner ───────────────────────────────
+
+function findOverridesLine(doc: vscode.TextDocument, packageName: string): number {
+  const lines = doc.getText().split("\n");
+  const escaped = packageName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`"${escaped}"\\s*:`);
+  let inOverridesBlock = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (/["'](?:overrides|resolutions)["']\s*:/.test(lines[i])) {
+      inOverridesBlock = true;
+    }
+    if (inOverridesBlock && pattern.test(lines[i])) {
+      return i;
+    }
+    // Reset on closing block that isn't inside a nested object
+    if (inOverridesBlock && /^\s*}/.test(lines[i])) {
+      inOverridesBlock = false;
+    }
+  }
+  return 0;
+}
+
+async function scanOverridesForCVEs(
+  doc: vscode.TextDocument,
+  _editor?: vscode.TextEditor,
+  opts: { silent?: boolean } = {}
+): Promise<void> {
+  if (!isPackageJson(doc)) return;
+
+  let parsed: Record<string, unknown>;
+  try { parsed = JSON.parse(doc.getText()); }
+  catch { return; }
+
+  const overrides: Record<string, string> = {
+    ...(parsed.overrides as Record<string, string> || {}),
+    ...(parsed.resolutions as Record<string, string> || {}),
+    ...((parsed.pnpm as any)?.overrides as Record<string, string> || {}),
+  };
+
+  const entries = Object.entries(overrides).filter(([, v]) => typeof v === "string");
+  if (entries.length === 0) return;
+
+  const CONCURRENCY = 8;
+  const newDiags: vscode.Diagnostic[] = [];
+
+  for (let i = 0; i < entries.length; i += CONCURRENCY) {
+    const slice = entries.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      slice.map(([name, ver]) => checkPackageOSV(name, ver))
+    );
+    for (const result of results) {
+      if (!result || result.riskLevel === "none" || result.vulnerabilities.length === 0) continue;
+      const line = Math.max(0, findOverridesLine(doc, result.package));
+      const lineText = doc.lineAt(line).text;
+      const range = new vscode.Range(line, 0, line, lineText.length);
+
+      const summary = result.vulnerabilities
+        .slice(0, 3)
+        .map((v) => `${v.id}${v.fixedVersion ? ` (fix: ${v.fixedVersion})` : ""}: ${v.summary}`)
+        .join("\n");
+      const more =
+        result.vulnerabilities.length > 3
+          ? `\n…and ${result.vulnerabilities.length - 3} more`
+          : "";
+
+      const severity =
+        result.riskLevel === "critical" || result.riskLevel === "high"
+          ? vscode.DiagnosticSeverity.Error
+          : vscode.DiagnosticSeverity.Warning;
+
+      const d = new vscode.Diagnostic(
+        range,
+        `[NPM Safety Guard / Overrides] ${result.package}@${result.version} pinned in overrides is vulnerable\n${summary}${more}`,
+        severity
+      );
+      d.source = "npm-safety-guard(overrides)";
+      const firstAdvisory = result.vulnerabilities[0]?.advisoryUrl;
+      d.code = {
+        value: `${result.package}@${result.version}`,
+        target: vscode.Uri.parse(
+          firstAdvisory ?? `https://osv.dev/list?q=${encodeURIComponent(result.package)}`
+        ),
+      };
+      newDiags.push(d);
+    }
+  }
+
+  const existing = diagnosticCollection.get(doc.uri) ?? [];
+  const nonOverrides = existing.filter((d) => d.source !== "npm-safety-guard(overrides)");
+  diagnosticCollection.set(doc.uri, [...nonOverrides, ...newDiags]);
+  updateStatusBar();
+
+  if (!opts.silent && newDiags.length > 0) {
+    vscode.window.showWarningMessage(
+      `NPM Safety Guard (Overrides): ${newDiags.length} CVE(s) found in pinned overrides/resolutions.`,
+      "View Report"
+    ).then((choice) => {
+      if (choice === "View Report") {
+        vscode.commands.executeCommand("npmSafetyGuard.showReport");
+      }
+    });
   }
 }
 

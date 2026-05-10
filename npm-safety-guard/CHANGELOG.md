@@ -2,6 +2,17 @@
 
 All notable changes to NPM Safety Guard will be documented here.
 
+## [1.9.0] — 2026-05-10
+
+### Added
+- **Layer 9 — Dependency Confusion Detector.** Checks every scoped package (`@scope/name`) against the public npm registry. Flags two attack patterns: (1) *version inflation* — the public registry has the same package at a major version 10+ ahead of your pinned version (the classic dependency confusion plant); (2) *fresh plant* — the package was published to public npm within the last 90 days and has fewer than 50 weekly downloads. The known-public-scope list (~80 entries: `@angular`, `@vue`, `@nestjs`, `@aws-sdk`, etc.) is skipped to eliminate false positives for teams that legitimately publish under those scopes. Runs automatically on every save (fire-and-forget) and via the new command.
+- **Layer 15 — Package Size Anomaly** (registry heuristics upgrade). The risk heuristics scorer now reads `dist.unpackedSize` from npm metadata and adds penalty points for abnormally large packages: >50 MB (+30 pts, "Unusually large — possible payload or bundled binary"), >10 MB (+15 pts), >5 MB (+8 pts). The distribution of a cryptominer or RAT dropper is typically far larger than the equivalent legitimate utility.
+- **Layer 17 — Overrides / Resolutions Poisoning.** Scans the `overrides`, `resolutions`, and `pnpm.overrides` blocks in package.json for CVE-vulnerable pinned versions via OSV.dev. Teams commonly pin transitive dependencies in overrides to silence an audit warning — but sometimes pin to a version that is itself vulnerable, creating a false sense of security. Runs automatically on every save.
+- **New command** `NPM Safety Guard: Check Dependency Confusion (scoped packages on public npm)`.
+- **New settings** `npmSafetyGuard.enableConfusionCheck` (default `true`) and `npmSafetyGuard.enableOverridesCheck` (default `true`).
+- **Security Report** now shows Dependency Confusion and Overrides Poisoning findings in dedicated sections with their own stat tiles.
+- **Status bar** counts confusion and overrides findings; confusion elevates to the red threat indicator alongside malware and typosquats.
+
 ## [1.8.11] — 2026-05-10
 
 ### Fixed
